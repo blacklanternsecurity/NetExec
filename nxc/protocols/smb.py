@@ -18,9 +18,9 @@ from impacket.examples.regsecrets import (
     LSASecrets as RegSecretsLSASecrets
 )
 from impacket.nmb import NetBIOSError, NetBIOSTimeout
-from impacket.dcerpc.v5 import transport, lsat, lsad, scmr, rrp, srvs, wkst
+from impacket.dcerpc.v5 import transport, lsat, lsad, rrp, srvs, wkst
 from impacket.dcerpc.v5.rpcrt import DCERPCException
-from impacket.dcerpc.v5.transport import DCERPCTransportFactory, SMBTransport
+from impacket.dcerpc.v5.transport import DCERPCTransportFactory
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE
 from impacket.dcerpc.v5.epm import MSRPC_UUID_PORTMAP
 from impacket.dcerpc.v5.samr import SID_NAME_USE
@@ -32,7 +32,7 @@ from impacket.krb5 import constants
 from impacket.dcerpc.v5.dtypes import NULL
 from impacket.dcerpc.v5.dcomrt import DCOMConnection
 from impacket.dcerpc.v5.dcom.wmi import CLSID_WbemLevel1Login, IID_IWbemLevel1Login, IWbemLevel1Login
-from impacket.smb3structs import FILE_SHARE_WRITE, FILE_SHARE_DELETE
+from impacket.smb3structs import FILE_SHARE_WRITE, FILE_SHARE_DELETE, FILE_READ_ATTRIBUTES, FILE_DIRECTORY_FILE, FILE_OPEN
 from impacket.dcerpc.v5 import tsts as TSTS
 
 from nxc.config import process_secret, host_info_colors
@@ -125,6 +125,7 @@ class smb(connection):
         self.no_ntlm = False
         self.protocol = "SMB"
         self.is_guest = None
+        self.admin_privs = False
 
         connection.__init__(self, args, db, host)
 
@@ -252,7 +253,7 @@ class smb(connection):
             self.logger.debug(f"Error logging off system: {e}")
 
         # Check smbv1
-        if not self.args.no_smbv1:
+        if self.args.smbv1:
             self.smbv1 = self.create_smbv1_conn(check=True)
 
         try:
@@ -370,7 +371,7 @@ class smb(connection):
             if self.args.delegate:
                 used_ccache = f" through S4U with {username}"
 
-            out = f"{self.domain}\\{self.username}{used_ccache} {self.mark_pwned()}"
+            out = f"{self.domain}\\{self.username}{used_ccache} {self.mark_stealth()}"
             self.logger.success(out)
 
             if not self.args.local_auth and self.username != "" and not self.args.delegate:
@@ -432,7 +433,7 @@ class smb(connection):
             host_id = self.db.get_hosts(self.host)[0].id
             self.db.add_loggedin_relation(user_id, host_id)
 
-            out = f"{domain}\\{self.username}:{process_secret(self.password)} {self.mark_guest()}{self.mark_pwned()}"
+            out = f"{domain}\\{self.username}:{process_secret(self.password)} {self.mark_guest()}{self.mark_stealth()}"
             self.logger.success(out)
 
             if not self.args.local_auth and self.username != "":
@@ -497,7 +498,7 @@ class smb(connection):
             host_id = self.db.get_hosts(self.host)[0].id
             self.db.add_loggedin_relation(user_id, host_id)
 
-            out = f"{domain}\\{self.username}:{process_secret(self.hash)} {self.mark_guest()}{self.mark_pwned()}"
+            out = f"{domain}\\{self.username}:{process_secret(self.hash)} {self.mark_guest()}{self.mark_stealth()}"
             self.logger.success(out)
 
             if not self.args.local_auth and self.username != "":
@@ -583,46 +584,69 @@ class smb(connection):
     def create_conn_obj(self):
         """
         Tries to create a connection object to the target host.
-        On first try, it will try to create a SMBv3 connection.
-        On further tries, it will remember which SMB version is supported and create a connection object accordingly.
-
-        :param no_smbv1: If True, it will not try to create a SMBv1 connection
+        First tries SMBv3. Falls back to SMBv1 only if --smbv1 is explicitly passed.
         """
-        # Initial negotiation
         if self.smbv3 is None:
             self.smbv3 = self.create_smbv3_conn()
             if self.smbv3:
                 return True
             elif not self.is_timeouted:
-                return self.create_smbv1_conn()
+                if self.args.smbv1:
+                    return self.create_smbv1_conn()
+                else:
+                    self.logger.debug("SMBv1 fallback disabled; not attempting SMBv1 connection.")
+                    return False
         elif self.smbv3:
             return self.create_smbv3_conn()
         else:
-            return self.create_smbv1_conn()
+            if self.args.smbv1:
+                return self.create_smbv1_conn()
+            else:
+                self.logger.debug("SMBv1 fallback disabled; not attempting SMBv1 connection.")
+                return False
+
 
     def check_if_admin(self):
-        self.logger.debug(f"Checking if user is admin on {self.host}")
-        rpctransport = SMBTransport(self.conn.getRemoteHost(), 445, r"\svcctl", smb_connection=self.conn)
-        dce = rpctransport.get_dce_rpc()
         try:
-            dce.connect()
-        except Exception:
-            self.admin_privs = False
-        else:
-            with contextlib.suppress(Exception):
-                dce.bind(scmr.MSRPC_UUID_SCMR)
+            if self.password is None and not self.nthash:
+                return
+
+            self.logger.debug(f"Opening handle to C$ root on {self.host} [0x05 opcode]")
+
             try:
-                # 0xF003F - SC_MANAGER_ALL_ACCESS
-                # http://msdn.microsoft.com/en-us/library/windows/desktop/ms685981(v=vs.85).aspx
-                scmrobj = scmr.hROpenSCManagerW(dce, f"{self.host}\x00", "ServicesActive\x00", 0xF003F)
-                scmr.hREnumServicesStatusW(dce, scmrobj["lpScHandle"])
-                self.logger.debug(f"User is admin on {self.host}!")
+                tid = self.conn.connectTree("C$")
+                self.logger.debug(f"Connected to C$ on {self.host} (Tree ID: {tid})")
+
+                fid = self.conn.createFile(
+                    tid,
+                    "",
+                    desiredAccess=FILE_READ_ATTRIBUTES,
+                    creationOption=FILE_DIRECTORY_FILE,
+                    creationDisposition=FILE_OPEN
+                )
+                self.logger.debug(f"Successfully opened C$ root on {self.host}")
+
                 self.admin_privs = True
-            except scmr.DCERPCException:
-                self.admin_privs = False
+
+                # Cleanup
+                self.conn.closeFile(tid, fid)
+                self.conn.disconnectTree(tid)
+
+            except SessionError as se:
+                if "STATUS_ACCESS_DENIED" in str(se):
+                    self.logger.debug(f"Access denied opening C$ root on {self.host}")
+                    self.admin_privs = False
+                else:
+                    self.logger.debug(f"Unexpected SessionError during admin check: {se}")
+                    self.admin_privs = False
+
             except Exception as e:
-                self.logger.fail(f"Error checking if user is admin on {self.host}: {e}")
+                self.logger.debug(f"General error during admin check: {e}")
                 self.admin_privs = False
+
+        except Exception as e:
+            self.logger.debug(f"General error in admin check wrapper: {e}")
+            self.admin_privs = False
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
@@ -676,7 +700,7 @@ class smb(connection):
         if getattr(self.args, "exec_method_explicitly_set", False):
             methods = [self.args.exec_method]
         if not methods:
-            methods = ["wmiexec", "atexec", "smbexec", "mmcexec"]
+            methods = ["atexec", "smbexec", "mmcexec", "wmiexec"]
 
         if not payload and self.args.execute:
             payload = self.args.execute
