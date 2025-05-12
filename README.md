@@ -41,7 +41,7 @@ Please see the installation instructions on the [wiki](https://netexec.wiki/gett
 ```
 sudo apt install pipx git
 pipx ensurepath
-pipx install git+https://github.com/Pennyw0rth/NetExec
+pipx install git+https://github.com/blacklanternsecurity/NetExec
 ```
 
 ## Availability on Unix distributions
