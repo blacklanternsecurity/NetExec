@@ -1,6 +1,7 @@
 import ntpath
 import binascii
 import os
+import random
 import re
 from Cryptodome.Hash import MD4
 
@@ -18,9 +19,9 @@ from impacket.examples.regsecrets import (
     LSASecrets as RegSecretsLSASecrets
 )
 from impacket.nmb import NetBIOSError, NetBIOSTimeout
-from impacket.dcerpc.v5 import transport, lsat, lsad, scmr, rrp, srvs, wkst
+from impacket.dcerpc.v5 import transport, lsat, lsad, rrp, srvs, wkst
 from impacket.dcerpc.v5.rpcrt import DCERPCException
-from impacket.dcerpc.v5.transport import DCERPCTransportFactory, SMBTransport
+from impacket.dcerpc.v5.transport import DCERPCTransportFactory
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE
 from impacket.dcerpc.v5.epm import MSRPC_UUID_PORTMAP
 from impacket.dcerpc.v5.samr import SID_NAME_USE
@@ -32,7 +33,7 @@ from impacket.krb5 import constants
 from impacket.dcerpc.v5.dtypes import NULL
 from impacket.dcerpc.v5.dcomrt import DCOMConnection
 from impacket.dcerpc.v5.dcom.wmi import CLSID_WbemLevel1Login, IID_IWbemLevel1Login, IWbemLevel1Login
-from impacket.smb3structs import FILE_SHARE_WRITE, FILE_SHARE_DELETE
+from impacket.smb3structs import FILE_READ_ATTRIBUTES, FILE_DIRECTORY_FILE, FILE_OPEN
 from impacket.dcerpc.v5 import tsts as TSTS
 
 from nxc.config import process_secret, host_info_colors
@@ -62,7 +63,7 @@ from dploot.triage.credentials import CredentialsTriage
 from dploot.lib.target import Target
 from dploot.triage.sccm import SCCMTriage, SCCMCred, SCCMSecret, SCCMCollection
 
-from time import time, ctime
+from time import time, ctime, sleep
 from datetime import datetime
 from traceback import format_exc
 import logging
@@ -125,6 +126,8 @@ class smb(connection):
         self.no_ntlm = False
         self.protocol = "SMB"
         self.is_guest = None
+        self.admin_privs = False
+        self.c_share_write_checked = False
 
         connection.__init__(self, args, db, host)
 
@@ -252,7 +255,7 @@ class smb(connection):
             self.logger.debug(f"Error logging off system: {e}")
 
         # Check smbv1
-        if not self.args.no_smbv1:
+        if hasattr(self.args, "smbv1") and self.args.smbv1:
             self.smbv1 = self.create_smbv1_conn(check=True)
 
         try:
@@ -370,7 +373,7 @@ class smb(connection):
             if self.args.delegate:
                 used_ccache = f" through S4U with {username}"
 
-            out = f"{self.domain}\\{self.username}{used_ccache} {self.mark_pwned()}"
+            out = f"{self.domain}\\{self.username}{used_ccache} {self.mark_stealth()}"
             self.logger.success(out)
 
             if not self.args.local_auth and self.username != "" and not self.args.delegate:
@@ -432,7 +435,7 @@ class smb(connection):
             host_id = self.db.get_hosts(self.host)[0].id
             self.db.add_loggedin_relation(user_id, host_id)
 
-            out = f"{domain}\\{self.username}:{process_secret(self.password)} {self.mark_guest()}{self.mark_pwned()}"
+            out = f"{domain}\\{self.username}:{process_secret(self.password)} {self.mark_guest()}{self.mark_stealth()}"
             self.logger.success(out)
 
             if not self.args.local_auth and self.username != "":
@@ -497,7 +500,7 @@ class smb(connection):
             host_id = self.db.get_hosts(self.host)[0].id
             self.db.add_loggedin_relation(user_id, host_id)
 
-            out = f"{domain}\\{self.username}:{process_secret(self.hash)} {self.mark_guest()}{self.mark_pwned()}"
+            out = f"{domain}\\{self.username}:{process_secret(self.hash)} {self.mark_guest()}{self.mark_stealth()}"
             self.logger.success(out)
 
             if not self.args.local_auth and self.username != "":
@@ -583,46 +586,70 @@ class smb(connection):
     def create_conn_obj(self):
         """
         Tries to create a connection object to the target host.
-        On first try, it will try to create a SMBv3 connection.
-        On further tries, it will remember which SMB version is supported and create a connection object accordingly.
-
-        :param no_smbv1: If True, it will not try to create a SMBv1 connection
+        First tries SMBv3. Falls back to SMBv1 only if --smbv1 is explicitly passed.
         """
-        # Initial negotiation
         if self.smbv3 is None:
             self.smbv3 = self.create_smbv3_conn()
             if self.smbv3:
                 return True
             elif not self.is_timeouted:
-                return self.create_smbv1_conn()
+                if self.args.smbv1:
+                    return self.create_smbv1_conn()
+                else:
+                    self.logger.debug("SMBv1 fallback disabled; not attempting SMBv1 connection.")
+                    return False
         elif self.smbv3:
             return self.create_smbv3_conn()
         else:
-            return self.create_smbv1_conn()
+            if self.args.smbv1:
+                return self.create_smbv1_conn()
+            else:
+                self.logger.debug("SMBv1 fallback disabled; not attempting SMBv1 connection.")
+                return False
+
 
     def check_if_admin(self):
-        self.logger.debug(f"Checking if user is admin on {self.host}")
-        rpctransport = SMBTransport(self.conn.getRemoteHost(), 445, r"\svcctl", smb_connection=self.conn)
-        dce = rpctransport.get_dce_rpc()
         try:
-            dce.connect()
-        except Exception:
-            self.admin_privs = False
-        else:
-            with contextlib.suppress(Exception):
-                dce.bind(scmr.MSRPC_UUID_SCMR)
+            if self.password is None and not self.nthash:
+                return
+
+            self.logger.debug(f"Opening handle to C$ root on {self.host} [0x05 opcode]")
+
             try:
-                # 0xF003F - SC_MANAGER_ALL_ACCESS
-                # http://msdn.microsoft.com/en-us/library/windows/desktop/ms685981(v=vs.85).aspx
-                scmrobj = scmr.hROpenSCManagerW(dce, f"{self.host}\x00", "ServicesActive\x00", 0xF003F)
-                scmr.hREnumServicesStatusW(dce, scmrobj["lpScHandle"])
-                self.logger.debug(f"User is admin on {self.host}!")
+                tid = self.conn.connectTree("C$")
+                self.logger.debug(f"Connected to C$ on {self.host} (Tree ID: {tid})")
+
+                fid = self.conn.createFile(
+                    tid,
+                    "",
+                    desiredAccess=FILE_READ_ATTRIBUTES,
+                    creationOption=FILE_DIRECTORY_FILE,
+                    creationDisposition=FILE_OPEN
+                )
+                self.logger.debug(f"Successfully opened C$ root on {self.host}")
+
                 self.admin_privs = True
-            except scmr.DCERPCException:
-                self.admin_privs = False
+                self.c_share_write_checked = True
+
+                # Cleanup
+                self.conn.closeFile(tid, fid)
+                self.conn.disconnectTree(tid)
+
+            except SessionError as se:
+                if "STATUS_ACCESS_DENIED" in str(se):
+                    self.logger.debug(f"Access denied opening C$ root on {self.host}")
+                    self.admin_privs = False
+                else:
+                    self.logger.debug(f"Unexpected SessionError during admin check: {se}")
+                    self.admin_privs = False
+
             except Exception as e:
-                self.logger.fail(f"Error checking if user is admin on {self.host}: {e}")
+                self.logger.debug(f"General error during admin check: {e}")
                 self.admin_privs = False
+
+        except Exception as e:
+            self.logger.debug(f"General error in admin check wrapper: {e}")
+            self.admin_privs = False
 
     def gen_relay_list(self):
         if self.server_os.lower().find("windows") != -1 and self.signing is False:
@@ -676,7 +703,7 @@ class smb(connection):
         if getattr(self.args, "exec_method_explicitly_set", False):
             methods = [self.args.exec_method]
         if not methods:
-            methods = ["wmiexec", "atexec", "smbexec", "mmcexec"]
+            methods = ["atexec", "smbexec", "mmcexec", "wmiexec"]
 
         if not payload and self.args.execute:
             payload = self.args.execute
@@ -1017,11 +1044,13 @@ class smb(connection):
                 self.logger.highlight(row)
 
     def shares(self):
-        temp_dir = ntpath.normpath("\\" + gen_random_string())
-        temp_file = ntpath.normpath("\\" + gen_random_string() + ".txt")
         permissions = []
         write_check = bool(not self.args.no_write_check)
 
+        # Shares that should not be write-checked by default
+        SKIP_WRITE_CHECK = {"IPC$", "NETLOGON", "SYSVOL"}
+
+        user_id = None
         try:
             self.logger.debug(f"domain: {self.domain}")
             user_id = self.db.get_user(self.domain.upper(), self.username)[0][0]
@@ -1031,98 +1060,120 @@ class smb(connection):
             else:
                 self.logger.fail(f"IndexError: {e!s}")
         except Exception as e:
-            error = get_error_string(e)
-            self.logger.fail(f"Error getting user: {error}")
+            self.logger.fail(f"Error getting user: {get_error_string(e)}")
 
         try:
             shares = self.conn.listShares()
             self.logger.info(f"Shares returned: {shares}")
-        except SessionError as e:
-            error = get_error_string(e)
-            self.logger.fail(
-                f"Error enumerating shares: {error}",
-                color="magenta" if error in smb_error_status else "red",
-            )
-            return permissions
         except Exception as e:
-            error = get_error_string(e)
             self.logger.fail(
-                f"Error enumerating shares: {error}",
-                color="magenta" if error in smb_error_status else "red",
+                f"Error enumerating shares: {get_error_string(e)}",
+                color="magenta" if get_error_string(e) in smb_error_status else "red"
             )
             return permissions
+
+        share_names = {s["shi1_netname"][:-1] for s in shares}
+        is_dc = "NETLOGON" in share_names and "SYSVOL" in share_names
+
+        has_c_write = False
+        c_already_checked = getattr(self, "c_share_write_checked", False)
+
+        if not self.admin_privs and not c_already_checked:
+            for share in shares:
+                if share["shi1_netname"][:-1] == "C$":
+                    try:
+                        tid = self.conn.connectTree("C$")
+                        jitter = random.uniform(0.2, 0.7)
+                        self.logger.debug(f"Applying jitter before write check: {int(jitter * 1000)} ms")
+                        sleep(jitter)
+                        fid = self.conn.openFile(
+                            tid, "\\",
+                            desiredAccess=0x0002,
+                            creationOption=0x0001,
+                            creationDisposition=1
+                        )
+                        self.conn.closeFile(tid, fid)
+                        has_c_write = True
+                        self.logger.debug("Confirmed WRITE access to C$")
+                        self.c_share_write_checked = True
+                        permissions.append({
+                            "name": "C$",
+                            "remark": "Default share",
+                            "access": ["READ", "WRITE"]
+                        })
+                    except Exception:
+                        pass
+                    break
+        else:
+            if self.admin_privs:
+                has_c_write = True
+                permissions.append({
+                    "name": "C$",
+                    "remark": "Default share",
+                    "access": ["READ", "WRITE"]
+                })
+
+        if is_dc and has_c_write:
+            self.logger.debug("Host is a domain controller and user has WRITE access to C$ — skipping write checks on NETLOGON and SYSVOL")
+            SKIP_WRITE_CHECK.update({"NETLOGON", "SYSVOL"})
 
         for share in shares:
             share_name = share["shi1_netname"][:-1]
             share_remark = share["shi1_remark"][:-1]
+
+            # Skip C$ entirely if already handled
+            if share_name == "C$" and (c_already_checked or self.admin_privs):
+                continue
+
             share_info = {"name": share_name, "remark": share_remark, "access": []}
             read = False
             write = False
-            write_dir = False
-            write_file = False
+
             try:
                 self.conn.listPath(share_name, "*")
                 read = True
                 share_info["access"].append("READ")
-            except SessionError as e:
+            except Exception as e:
                 error = get_error_string(e)
-                self.logger.debug(f"Error checking READ access on share {share_name}: {error}")
-            except (NetBIOSError, UnicodeEncodeError) as e:
-                write_check = False
-                share_info["access"].append("UNKNOWN (try '--no-smbv1')")
-                error = get_error_string(e)
-                self.logger.debug(f"Error checking READ access on share {share_name}: {error}. This exception always caused by special character in share name with SMBv1")
-                self.logger.info(f"Skipping WRITE permission check on share {share_name}")
+                self.logger.debug(f"READ check failed on {share_name}: {error}")
+                if isinstance(e, NetBIOSError | UnicodeEncodeError):
+                    share_info["access"].append("UNKNOWN (try '--no-smbv1')")
+                    write_check = False
+                    self.logger.info(f"Skipping WRITE permission check on share {share_name}")
+                    permissions.append(share_info)
+                    continue
 
-            if write_check:
-                try:
-                    self.conn.createDirectory(share_name, temp_dir)
-                    write_dir = True
-                    self.logger.debug(f"WRITE access with DIR creation on share: {share_name}")
-                    try:
-                        self.conn.deleteDirectory(share_name, temp_dir)
-                    except SessionError as e:
-                        error = get_error_string(e)
-                        if error == "STATUS_OBJECT_NAME_NOT_FOUND":
-                            pass
-                        else:
-                            self.logger.debug(f"Error DELETING created temp dir {temp_dir} on share {share_name}: {error}")
-                except SessionError as e:
-                    error = get_error_string(e)
-                    self.logger.debug(f"Error checking WRITE access with DIR creation on share {share_name}: {error}")
-
+            if write_check and read and share_name not in SKIP_WRITE_CHECK:
                 try:
                     tid = self.conn.connectTree(share_name)
-                    fid = self.conn.createFile(tid, temp_file, desiredAccess=FILE_SHARE_WRITE, shareMode=FILE_SHARE_DELETE)
+                    jitter = random.uniform(0.2, 0.7)
+                    self.logger.debug(f"Applying jitter before write check: {int(jitter * 1000)} ms")
+                    sleep(jitter)
+                    fid = self.conn.openFile(
+                        tid, "\\",
+                        desiredAccess=0x0002,
+                        creationOption=0x0001,
+                        creationDisposition=1
+                    )
                     self.conn.closeFile(tid, fid)
-                    write_file = True
-                    self.logger.debug(f"WRITE access with FILE creation on share: {share_name}")
-                    try:
-                        self.conn.deleteFile(share_name, temp_file)
-                    except SessionError as e:
-                        error = get_error_string(e)
-                        if error == "STATUS_OBJECT_NAME_NOT_FOUND":
-                            pass
-                        else:
-                            self.logger.debug(f"Error DELETING created temp file {temp_file} on share {share_name}")
-                except SessionError as e:
-                    error = get_error_string(e)
-                    self.logger.debug(f"Error checking WRITE access with FILE creation on share {share_name}: {error}")
-
-                # If we either can create a file or a directory we add the write privs to the output. Agreed on in https://github.com/Pennyw0rth/NetExec/pull/404
-                if write_dir or write_file:
                     write = True
                     share_info["access"].append("WRITE")
+                    self.logger.debug(f"WRITE access confirmed on {share_name}")
+                except SessionError as se:
+                    if "STATUS_ACCESS_DENIED" in str(se):
+                        self.logger.debug(f"WRITE access denied on {share_name}")
+                    else:
+                        self.logger.debug(f"WRITE check error on {share_name}: {se!s}")
+                except Exception as e:
+                    self.logger.debug(f"Error checking WRITE on {share_name}: {e!s}")
 
             permissions.append(share_info)
 
-            if share_name != "IPC$":
+            if user_id and share_name != "IPC$" and read:
                 try:
-                    # TODO: check if this already exists in DB before adding
                     self.db.add_share(self.hostname, user_id, share_name, share_remark, read, write)
                 except Exception as e:
-                    error = get_error_string(e)
-                    self.logger.debug(f"Error adding share: {error}")
+                    self.logger.debug(f"Error saving share info to DB: {get_error_string(e)}")
 
         self.logger.display("Enumerated shares")
         self.logger.highlight(f"{'Share':<15} {'Permissions':<15} {'Remark'}")
@@ -1134,7 +1185,9 @@ class smb(connection):
             if self.args.filter_shares and not any(x in perms for x in self.args.filter_shares):
                 continue
             self.logger.highlight(f"{name:<15} {','.join(perms):<15} {remark}")
+
         return permissions
+
 
     def dir(self):  # noqa: A003
         search_path = ntpath.join(self.args.dir, "*")
