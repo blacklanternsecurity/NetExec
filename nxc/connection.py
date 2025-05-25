@@ -276,7 +276,7 @@ class connection:
                 extra={
                     "module_name": module.name.upper(),
                     "host": self.host,
-                    "port": self.args.port,
+                    "port": self.port,
                     "hostname": self.hostname,
                 },
             )
