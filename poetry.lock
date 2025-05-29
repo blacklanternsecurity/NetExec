@@ -335,15 +335,15 @@ files = [
 ]
 
 [[package]]
-name = "bloodhound-ce"
+name = "bloodhound"
 version = "1.8.0"
-description = "Python based ingestor for BloodHound Community Edition"
+description = "Python based ingestor for BloodHound"
 optional = false
 python-versions = "*"
 groups = ["main"]
 files = [
-    {file = "bloodhound_ce-1.8.0-py3-none-any.whl", hash = "sha256:0d5f39c2ab157448313f6c0ea8afdcf081238682f445c81e065684395ba5484b"},
-    {file = "bloodhound_ce-1.8.0.tar.gz", hash = "sha256:f663d6181e2a1ab8de9d57948011662e2a47880d8caca9b85369a7efaed13a70"},
+    {file = "bloodhound-1.8.0-py3-none-any.whl", hash = "sha256:97dcef77fa38dbab7219909c117eb9fd7263aff107cee0bf6fc7a0d0db9a61ac"},
+    {file = "bloodhound-1.8.0.tar.gz", hash = "sha256:35ed0f1fdda2b1d79a4e9d891cabe2c55309a32743aeed16d885f3d809f409b3"},
 ]
 
 [package.dependencies]
@@ -891,7 +891,6 @@ type = "git"
 url = "https://github.com/blacklanternsecurity/impacket"
 reference = "HEAD"
 resolved_reference = "0769c221136c2bee99643bcfd0e34f3a42636de9"
-
 
 [[package]]
 name = "iniconfig"
@@ -2464,4 +2463,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4.0"
-content-hash = "911edd6ab7b3cc8b1f3d890d7648c8f67e5b047ca8333b0eb2945bfe54fc541d"
+content-hash = "10c3d9c1eaff49addd49ecfb9938705fa237710abd5f9a8bdbab29281e021a7a"
