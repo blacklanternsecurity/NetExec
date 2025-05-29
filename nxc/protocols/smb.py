@@ -976,7 +976,7 @@ class smb(connection):
         maxRemoteIp = maxRemoteIp if len("RemoteAddress") < maxRemoteIp else len("RemoteAddress") + 1
         maxClientName = max(len(sessions[i]["ClientName"]) + 1 for i in sessions)
         maxClientName = maxClientName if len("ClientName") < maxClientName else len("ClientName") + 1
-        template = ("{SESSIONNAME: <%d} "  # noqa: UP031
+        template = ("{SESSIONNAME: <%d} "
                     "{USERNAME: <%d} "
                     "{ID: <%d} "
                     "{IPv4: <16} "
@@ -1047,7 +1047,7 @@ class smb(connection):
             self.logger.success("Enumerated processes")
             maxImageNameLen = max(len(i["ImageName"]) for i in res)
             maxSidLen = max(len(i["pSid"]) for i in res)
-            template = "{: <%d} {: <8} {: <11} {: <%d} {: >12}" % (maxImageNameLen, maxSidLen)  # noqa: UP031
+            template = "{: <%d} {: <8} {: <11} {: <%d} {: >12}" % (maxImageNameLen, maxSidLen)
             self.logger.highlight(template.format("Image Name", "PID", "Session#", "SID", "Mem Usage"))
             self.logger.highlight(template.replace(": ", ":=").format("", "", "", "", ""))
             for procInfo in res:
