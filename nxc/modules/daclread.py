@@ -231,7 +231,7 @@ class NXCModule:
             context.log.debug("There is a target specified!")
             if re.search(r"^(.+)\/([^\/]+)$", module_options["TARGET"]) is not None:
                 try:
-                    self.target_file = open(module_options["TARGET"])  # noqa: SIM115
+                    self.target_file = open(module_options["TARGET"])
                     self.target_sAMAccountName = None
                 except Exception:
                     context.log.fail("The file doesn't exist or cannot be openned.")

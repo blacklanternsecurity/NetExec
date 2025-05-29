@@ -106,7 +106,8 @@ ignore = [
     "A004", "E501", "F405", "D100", "D101", "D102", "D103", "D104", "D105", "D106",
     "D107", "D203", "D204", "D205", "D212", "D213", "D400", "D401", "D413", "D415",
     "D417", "D419", "FURB", "RET503", "RET505", "RET506", "RET507", "RET508",
-    "PERF203", "RUF012", "RUF052", "RUF059"
+    "PERF203", "RUF012", "RUF052", "RUF059", "SIM103", "SIM113", "SIM115", "UP031",
+    "B909", "RUF029"
 ]
 
 # THE SETTINGS BELOW ARE DEFAULTS, left in here to override potential vs-code settings

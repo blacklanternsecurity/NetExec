@@ -132,7 +132,6 @@ class smb(connection):
         self.c_share_write_checked = False
         self.isdc = False
 
-
         connection.__init__(self, args, db, host)
 
     def proto_logger(self):
@@ -611,7 +610,6 @@ class smb(connection):
             else:
                 self.logger.debug("SMBv1 fallback disabled; not attempting SMBv1 connection.")
                 return False
-
 
     def check_if_admin(self):
         try:
@@ -1205,7 +1203,6 @@ class smb(connection):
 
         return permissions
 
-
     def dir(self):
         search_path = ntpath.join(self.args.dir, "*")
         try:
@@ -1746,7 +1743,7 @@ class smb(connection):
 
         if self.args.pvk is not None:
             try:
-                self.pvkbytes = open(self.args.pvk, "rb").read()  # noqa: SIM115
+                self.pvkbytes = open(self.args.pvk, "rb").read()
                 self.logger.success(f"Loading domain backupkey from {self.args.pvk}")
             except Exception as e:
                 self.logger.fail(str(e))
@@ -1767,7 +1764,7 @@ class smb(connection):
             use_kcache=self.use_kcache,
         )
 
-        self.output_file = open(self.output_file_template.format(output_folder="dpapi"), "w", encoding="utf-8")  # noqa: SIM115
+        self.output_file = open(self.output_file_template.format(output_folder="dpapi"), "w", encoding="utf-8")
 
         conn = upgrade_to_dploot_connection(connection=self.conn, target=target)
         if conn is None:
