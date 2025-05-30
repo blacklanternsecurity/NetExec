@@ -294,8 +294,7 @@ class connection:
                 module.on_admin_login(context, self)
 
     def inc_failed_login(self, username):
-        global global_failed_logins
-        global user_failed_logins
+        global global_failed_logins, user_failed_logins
 
         if username not in user_failed_logins:
             user_failed_logins[username] = 0
@@ -305,8 +304,7 @@ class connection:
         self.failed_logins += 1
 
     def over_fail_limit(self, username):
-        global global_failed_logins
-        global user_failed_logins
+        global global_failed_logins, user_failed_logins
 
         if global_failed_logins == self.args.gfail_limit:
             return True

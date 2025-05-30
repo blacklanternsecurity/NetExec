@@ -103,7 +103,7 @@ class NXCAdapter(logging.LoggerAdapter):
         logging.getLogger("dploot").disabled = True
         logging.getLogger("neo4j").setLevel(logging.ERROR)
 
-    def format(self, msg, *args, **kwargs):  # noqa: A003
+    def format(self, msg, *args, **kwargs):
         """Format msg for output
 
         This is used instead of process() since process() applies to _all_ messages, including debug calls
@@ -175,7 +175,7 @@ class NXCAdapter(logging.LoggerAdapter):
         file_creation = False
 
         if not os.path.isfile(output_file):
-            open(output_file, "x")  # noqa: SIM115
+            open(output_file, "x")
             file_creation = True
 
         file_handler = RotatingFileHandler(output_file, maxBytes=100000, encoding="utf-8")
