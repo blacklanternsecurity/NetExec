@@ -36,7 +36,7 @@ from impacket.dcerpc.v5.dcom.wmi import CLSID_WbemLevel1Login, IID_IWbemLevel1Lo
 from impacket.smb3structs import FILE_READ_ATTRIBUTES, FILE_DIRECTORY_FILE, FILE_OPEN
 from impacket.dcerpc.v5 import tsts as TSTS
 
-from nxc.config import process_secret, host_info_colors
+from nxc.config import process_secret, host_info_colors, stealth_label
 from nxc.connection import connection, sem, requires_admin, dcom_FirewallChecker
 from nxc.helpers.misc import gen_random_string, validate_ntlm
 from nxc.logger import NXCAdapter
@@ -2051,3 +2051,6 @@ class smb(connection):
 
     def mark_guest(self):
         return highlight(f"{highlight('(Guest)')}" if self.is_guest else "")
+
+    def mark_stealth(self):
+        return highlight(f"({stealth_label})" if self.admin_privs else "")
