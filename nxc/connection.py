@@ -1,3 +1,5 @@
+from datetime import datetime
+import os
 import random
 import sys
 import contextlib
@@ -16,6 +18,7 @@ from nxc.helpers.logger import highlight
 from nxc.loaders.moduleloader import ModuleLoader
 from nxc.logger import nxc_logger, NXCAdapter
 from nxc.context import Context
+from nxc.paths import NXC_PATH
 from nxc.protocols.ldap.laps import laps_search
 from nxc.helpers.pfx import pfx_auth
 
@@ -137,7 +140,11 @@ class connection:
         # Authentication info
         self.password = ""
         self.username = ""
-        self.kerberos = bool(self.args.kerberos or self.args.use_kcache or self.args.aesKey or (hasattr(self.args, "delegate") and self.args.delegate))
+        self.kerberos = bool(self.args.kerberos or
+                             self.args.use_kcache or
+                             self.args.aesKey or
+                             (hasattr(self.args, "delegate") and self.args.delegate) or
+                             (hasattr(self.args, "no_preauth_targets") and self.args.no_preauth_targets))
         self.aesKey = None if not self.args.aesKey else self.args.aesKey[0]
         self.use_kcache = None if not self.args.use_kcache else self.args.use_kcache
         self.admin_privs = False
@@ -152,6 +159,11 @@ class connection:
         self.port = self.args.port
         self.local_ip = None
         self.dns_server = self.args.dns_server
+
+        # Construct the output file template using os.path.join for OS compatibility
+        base_log_dir = os.path.join(os.path.expanduser(NXC_PATH), "logs")
+        filename_pattern = f"{self.hostname}_{self.host}_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}".replace(":", "-")
+        self.output_file_template = os.path.join(base_log_dir, "{output_folder}", filename_pattern)
 
         # DNS resolution
         dns_result = self.resolver(target)
@@ -417,14 +429,14 @@ class connection:
                     with open(ntlm_hash) as ntlm_hash_file:
                         for i, line in enumerate(ntlm_hash_file):
                             line = line.strip()
-                            if len(line) != 32 and len(line) != 65:
+                            if len(line) != 32 and len(line) != 65 and len(line) != 0:
                                 self.logger.fail(f"Invalid NTLM hash length on line {(i + 1)} (len {len(line)}): {line}")
                                 continue
                             else:
                                 secret.append(line)
                                 cred_type.append("hash")
                 else:
-                    if len(ntlm_hash) != 32 and len(ntlm_hash) != 65:
+                    if len(ntlm_hash) != 32 and len(ntlm_hash) != 65 and len(ntlm_hash) != 0:
                         self.logger.fail(f"Invalid NTLM hash length {len(ntlm_hash)}, authentication not sent")
                         exit(1)
                     else:

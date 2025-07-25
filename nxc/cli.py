@@ -25,8 +25,7 @@ def gen_cli_args():
         COMMIT = ""
         DISTANCE = ""
     CODENAME = "BLS"
-    nxc_logger.debug(f"NXC VERSION: {VERSION} - {CODENAME} - {COMMIT} - {DISTANCE}")
-
+    
     generic_parser = argparse.ArgumentParser(add_help=False, formatter_class=DisplayDefaultsNotNone)
     generic_group = generic_parser.add_argument_group("Generic", "Generic options for nxc across protocols")
     generic_group.add_argument("--version", action="store_true", help="Display nxc version")
@@ -133,7 +132,7 @@ def gen_cli_args():
     if hasattr(args, "get_output_tries"):
         args.get_output_tries = args.get_output_tries * 10
 
-    return args
+    return args, [CODENAME, VERSION, COMMIT, DISTANCE]
 
 
 def get_module_names():
