@@ -66,7 +66,6 @@ from dploot.triage.sccm import SCCMTriage, SCCMCred, SCCMSecret, SCCMCollection
 
 
 from time import time, ctime, sleep
-from datetime import datetime
 from traceback import format_exc
 from termcolor import colored
 import contextlib
