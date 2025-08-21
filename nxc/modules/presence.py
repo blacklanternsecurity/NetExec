@@ -19,6 +19,46 @@ class NXCModule:
     def options(self, context, module_options):
         """There are no module options."""
 
+    # --- helper: build/bind DCE-RPC while pinning TCP to IP and using safe server name ---
+    def get_dce_rpc(self, tcp_host, string_binding, dce_binding, connection, remote_name=None):
+        """
+        tcp_host: the TCP destination (IP)
+        string_binding: ncacn_np binding (FQDN for Kerberos SPN; IP for NTLM is fine)
+        remote_name: SMB server name for auth ('*SMBSERVER' for NTLM; FQDN for Kerberos)
+        """
+        rpctransport = transport.DCERPCTransportFactory(string_binding)
+
+        # Pin the actual TCP destination to the IP we intend to hit.
+        rpctransport.setRemoteHost(tcp_host)
+
+        # Choose the SMB "server name" used by the session.
+        if remote_name is None:
+            remote_name = (
+                f"{connection.hostname}.{connection.domain}"
+                if connection.kerberos
+                else "*SMBSERVER"
+            )
+        rpctransport.setRemoteName(remote_name)
+
+        rpctransport.set_credentials(
+            connection.username,
+            connection.password,
+            connection.domain,
+            connection.lmhash,
+            connection.nthash,
+            aesKey=connection.aesKey,
+        )
+        rpctransport.set_kerberos(connection.kerberos, connection.kdcHost)
+
+        dce = rpctransport.get_dce_rpc()
+        if connection.kerberos:
+            dce.set_auth_type(RPC_C_AUTHN_GSS_NEGOTIATE)
+        dce.set_credentials(*rpctransport.get_credentials())
+        dce.connect()
+        dce.set_auth_level(RPC_C_AUTHN_LEVEL_PKT_PRIVACY)
+        dce.bind(dce_binding)
+        return dce
+
     def on_admin_login(self, context, connection):
         try:
             admin_users = self.enumerate_admin_users(context, connection)
@@ -37,36 +77,26 @@ class NXCModule:
             context.log.fail(str(e))
             context.log.debug(traceback.format_exc())
 
-    def get_dce_rpc(self, target, string_binding, dce_binding, connection):
-        # Create a DCE/RPC transport object with the specified string binding
-        rpctransport = transport.DCERPCTransportFactory(string_binding)
-        rpctransport.setRemoteHost(target)
-        rpctransport.set_credentials(
-            connection.username,
-            connection.password,
-            connection.domain,
-            connection.lmhash,
-            connection.nthash,
-            aesKey=connection.aesKey,
-        )
-        rpctransport.set_kerberos(connection.kerberos, connection.kdcHost)
-
-        # Connect to the DCE/RPC endpoint
-        dce = rpctransport.get_dce_rpc()
-        if connection.kerberos:
-            dce.set_auth_type(RPC_C_AUTHN_GSS_NEGOTIATE)
-        dce.set_credentials(*rpctransport.get_credentials())
-        dce.connect()
-        dce.set_auth_level(RPC_C_AUTHN_LEVEL_PKT_PRIVACY)
-        dce.bind(dce_binding)
-        return dce
-
     def enumerate_admin_users(self, context, connection):
         admin_users = []
 
         try:
-            string_binding = fr"ncacn_np:{connection.kdcHost}[\pipe\samr]"
-            dce = self.get_dce_rpc(connection.kdcHost, string_binding, samr.MSRPC_UUID_SAMR, connection)
+            tcp_ip = connection.host  # e.g., 10.10.11.181
+            # Binding name: FQDN for Kerberos SPN; IP is fine for NTLM.
+            bind_name = (
+                f"{connection.hostname}.{connection.domain}"
+                if connection.kerberos
+                else tcp_ip
+            )
+            string_binding = fr"ncacn_np:{bind_name}[\pipe\samr]"
+            dce = self.get_dce_rpc(
+                tcp_host=tcp_ip,
+                string_binding=string_binding,
+                dce_binding=samr.MSRPC_UUID_SAMR,
+                connection=connection,
+                remote_name=(f"{connection.hostname}.{connection.domain}"
+                             if connection.kerberos else "*SMBSERVER"),
+            )
         except Exception as e:
             context.log.fail(f"Failed to connect to SAMR: {e}")
             context.log.debug(traceback.format_exc())
@@ -77,7 +107,9 @@ class NXCModule:
             domain = samr.hSamrEnumerateDomainsInSamServer(dce, server_handle)["Buffer"]["Buffer"][0]["Name"]
             resp = samr.hSamrLookupDomainInSamServer(dce, server_handle, domain)
             self.domain_sid = resp["DomainId"].formatCanonical()
-            domain_handle = samr.hSamrOpenDomain(dce, server_handle, samr.DOMAIN_LOOKUP | samr.DOMAIN_LIST_ACCOUNTS, resp["DomainId"])["DomainHandle"]
+            domain_handle = samr.hSamrOpenDomain(
+                dce, server_handle, samr.DOMAIN_LOOKUP | samr.DOMAIN_LIST_ACCOUNTS, resp["DomainId"]
+            )["DomainHandle"]
             context.log.debug(f"Resolved domain SID for {domain}: {self.domain_sid}")
         except Exception as e:
             context.log.fail(f"Failed to open domain {domain}: {e!s}")
@@ -100,14 +132,26 @@ class NXCModule:
                     rid = int.from_bytes(member.getData(), byteorder="little")
                     try:
                         user_handle = samr.hSamrOpenUser(dce, domain_handle, samr.MAXIMUM_ALLOWED, rid)["UserHandle"]
-                        username = samr.hSamrQueryInformationUser2(dce, user_handle, samr.USER_INFORMATION_CLASS.UserAllInformation)["Buffer"]["All"]["UserName"]
+                        username = samr.hSamrQueryInformationUser2(
+                            dce, user_handle, samr.USER_INFORMATION_CLASS.UserAllInformation
+                        )["Buffer"]["All"]["UserName"]
 
                         # If user already exists, append group name
                         if any(u["sid"] == f"{self.domain_sid}-{rid}" for u in admin_users):
                             user = next(u for u in admin_users if u["sid"] == f"{self.domain_sid}-{rid}")
                             user["group"].append(group_name)
                         else:
-                            admin_users.append({"username": username, "sid": f"{self.domain_sid}-{rid}", "domain": domain, "group": [group_name], "in_tasks": False, "in_directory": False, "in_scheduled_tasks": False})
+                            admin_users.append(
+                                {
+                                    "username": username,
+                                    "sid": f"{self.domain_sid}-{rid}",
+                                    "domain": domain,
+                                    "group": [group_name],
+                                    "in_tasks": False,
+                                    "in_directory": False,
+                                    "in_scheduled_tasks": False,
+                                }
+                            )
                         context.log.debug(f"Found user: {username} with RID {rid} in group {group_name}")
                     except Exception as e:
                         context.log.debug(f"Failed to get user info for RID {rid}: {e!s}")
@@ -151,11 +195,23 @@ class NXCModule:
 
     def check_tasklist(self, context, connection, admin_users):
         """Checks tasklist over rpc."""
+        # Choose a stable server name for the RPC layer (matches our SMB session)
+        remote_name = (
+            f"{connection.hostname}.{connection.domain}"
+            if connection.kerberos else "*SMBSERVER"
+        )
         try:
-            with TSTS.LegacyAPI(connection.conn, connection.remoteName, kerberos=connection.kerberos) as legacy:
+            # LegacyAPI reuses the existing SMB connection; give it the right name
+            with TSTS.LegacyAPI(connection.conn, remote_name, kerberos=connection.kerberos) as legacy:
                 handle = legacy.hRpcWinStationOpenServer()
                 processes = legacy.hRpcWinStationGetAllProcesses(handle)
         except Exception as e:
+            msg = str(e)
+            # If the WinStation/TSTS pipe or object isn't there, just skip this check
+            if "STATUS_OBJECT_NAME_NOT_FOUND" in msg or "0xc0000034" in msg.lower():
+                context.log.debug("TSTS/WinStation endpoint not present; skipping tasklist enumeration")
+                return []
+            # Other errors: log and continue without failing the whole module
             context.log.fail(f"Error in check_tasklist RPC method: {e}")
             return []
 
@@ -163,7 +219,6 @@ class NXCModule:
 
         for process in processes:
             context.log.debug(f"ImageName: {process['ImageName']}, UniqueProcessId: {process['SessionId']}, pSid: {process['pSid']}")
-            # Check if process SID matches any admin user SID
             for user in admin_users:
                 if process["pSid"] == user["sid"]:
                     user["in_tasks"] = True
@@ -172,9 +227,21 @@ class NXCModule:
     def check_scheduled_tasks(self, context, connection, admin_users):
         """Checks scheduled tasks over rpc."""
         try:
-            target = connection.remoteName if connection.kerberos else connection.host
-            stringbinding = f"ncacn_np:{target}[\\pipe\\atsvc]"
-            dce = self.get_dce_rpc(target, stringbinding, tsch.MSRPC_UUID_TSCHS, connection)
+            tcp_ip = connection.host
+            target_name = (
+                f"{connection.hostname}.{connection.domain}"
+                if connection.kerberos
+                else tcp_ip
+            )
+            stringbinding = f"ncacn_np:{target_name}[\\pipe\\atsvc]"
+            dce = self.get_dce_rpc(
+                tcp_host=tcp_ip,
+                string_binding=stringbinding,
+                dce_binding=tsch.MSRPC_UUID_TSCHS,
+                connection=connection,
+                remote_name=(f"{connection.hostname}.{connection.domain}"
+                             if connection.kerberos else "*SMBSERVER"),
+            )
 
             # Also extract non admins where we can get the password
             self.non_admins = []
@@ -198,18 +265,36 @@ class NXCModule:
                         non_admin_sids.add(sid.group(1))
 
             if non_admin_sids:
-                string_binding = fr"ncacn_np:{connection.kdcHost}[\pipe\samr]"
-                dce = self.get_dce_rpc(connection.kdcHost, string_binding, samr.MSRPC_UUID_SAMR, connection)
+                # Re-use SAMR with pinned TCP to IP and correct server name.
+                tcp_ip = connection.host
+                bind_name = (
+                    f"{connection.hostname}.{connection.domain}"
+                    if connection.kerberos
+                    else tcp_ip
+                )
+                string_binding = fr"ncacn_np:{bind_name}[\pipe\samr]"
+                dce = self.get_dce_rpc(
+                    tcp_host=tcp_ip,
+                    string_binding=string_binding,
+                    dce_binding=samr.MSRPC_UUID_SAMR,
+                    connection=connection,
+                    remote_name=(f"{connection.hostname}.{connection.domain}"
+                                 if connection.kerberos else "*SMBSERVER"),
+                )
 
                 # Get Domain Handle
                 server_handle = samr.hSamrConnect2(dce)["ServerHandle"]
                 domain = samr.hSamrEnumerateDomainsInSamServer(dce, server_handle)["Buffer"]["Buffer"][0]["Name"]
                 domain_sid = samr.hSamrLookupDomainInSamServer(dce, server_handle, domain)["DomainId"]
-                domain_handle = samr.hSamrOpenDomain(dce, server_handle, samr.DOMAIN_LOOKUP | samr.DOMAIN_LIST_ACCOUNTS, domain_sid)["DomainHandle"]
+                domain_handle = samr.hSamrOpenDomain(
+                    dce, server_handle, samr.DOMAIN_LOOKUP | samr.DOMAIN_LIST_ACCOUNTS, domain_sid
+                )["DomainHandle"]
 
                 for sid in non_admin_sids:
                     user_handle = samr.hSamrOpenUser(dce, domain_handle, samr.MAXIMUM_ALLOWED, int(sid.split("-")[-1]))["UserHandle"]
-                    username = samr.hSamrQueryInformationUser2(dce, user_handle, samr.USER_INFORMATION_CLASS.UserAllInformation)["Buffer"]["All"]["UserName"]
+                    username = samr.hSamrQueryInformationUser2(
+                        dce, user_handle, samr.USER_INFORMATION_CLASS.UserAllInformation
+                    )["Buffer"]["All"]["UserName"]
                     self.non_admins.append(username)
 
         except Exception as e:
@@ -241,7 +326,7 @@ class NXCModule:
             context.log.success("Found admins in scheduled tasks:")
             for user in scheduled_tasks_users:
                 context.log.highlight(f"{user['username']} ({', '.join(user['group'])})")
-        if self.non_admins:
+        if getattr(self, "non_admins", None):
             context.log.info(f"Found {len(self.non_admins)} non-admin scheduled tasks:")
             for sid in self.non_admins:
                 context.log.info(sid)
