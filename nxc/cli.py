@@ -25,7 +25,7 @@ def gen_cli_args():
         COMMIT = ""
         DISTANCE = ""
     CODENAME = "BLS"
-    
+
     generic_parser = argparse.ArgumentParser(add_help=False, formatter_class=DisplayDefaultsNotNone)
     generic_group = generic_parser.add_argument_group("Generic", "Generic options for nxc across protocols")
     generic_group.add_argument("--version", action="store_true", help="Display nxc version")
@@ -60,7 +60,7 @@ def gen_cli_args():
 
     The network execution tool
     Maintained as an open source project by @NeffIsBack, @MJHallenbeck, @_zblurx
-    
+
     For documentation and usage examples, visit: https://www.netexec.wiki/
 
     {highlight('Version', 'red')} : {highlight(VERSION)}

