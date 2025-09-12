@@ -120,10 +120,8 @@ def format_host_query(q, filter_term, HostsTable):
     # TODO: normalize these column names
     if hasattr(HostsTable.c, "ip"):
         ip_column = HostsTable.c.ip
-        nxc_logger.debug("Using 'ip' column for filtering")
     elif hasattr(HostsTable.c, "host"):
         ip_column = HostsTable.c.host
-        nxc_logger.debug("Using 'host' column for filtering")
     else:
         nxc_logger.debug("Neither 'ip' nor 'host' columns found in the table")
         return q
@@ -131,10 +129,8 @@ def format_host_query(q, filter_term, HostsTable):
     # first we check if its an ip address
     try:
         ipaddress.ip_address(filter_term)
-        nxc_logger.debug(f"filter_term is an IP address: {filter_term}")
         q = q.filter(ip_column == filter_term)
     except ValueError:
-        nxc_logger.debug(f"filter_term is not an IP address: {filter_term}")
         like_term = func.lower(f"%{filter_term}%")
 
         # check if the hostname column exists for hostname searching

@@ -481,9 +481,7 @@ class database(BaseDB):
         elif filter_term and filter_term != "":
             q = format_host_query(q, filter_term, self.HostsTable)
 
-        results = self.db_execute(q).all()
-        nxc_logger.debug(f"smb hosts() - results: {results}")
-        return results
+        return self.db_execute(q).all()
 
     def is_group_valid(self, group_id):
         """Check if this group ID is valid."""

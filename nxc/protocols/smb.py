@@ -39,7 +39,6 @@ from impacket.smb3structs import FILE_READ_ATTRIBUTES, FILE_DIRECTORY_FILE, FILE
 from impacket.dcerpc.v5 import tsts as TSTS
 
 from nxc.config import process_secret, host_info_colors, stealth_label
-
 from nxc.connection import connection, sem, requires_admin, dcom_FirewallChecker
 from nxc.helpers.misc import gen_random_string, validate_ntlm
 from nxc.logger import NXCAdapter
@@ -270,7 +269,7 @@ class smb(connection):
             self.logger.debug(f"Error logging off system: {e}")
 
         # Check smbv1
-        if hasattr(self.args, "smbv1") and self.args.smbv1:
+        if self.args.smbv1:
             self.smbv1 = self.create_smbv1_conn(check=True)
 
         try:
@@ -299,7 +298,8 @@ class smb(connection):
         smbv1 = colored(f"SMBv1:{self.smbv1}", host_info_colors[2], attrs=["bold"]) if self.smbv1 else colored(f"SMBv1:{self.smbv1}", host_info_colors[3], attrs=["bold"])
         ntlm = colored(f" (NTLM:{not self.no_ntlm})", host_info_colors[2], attrs=["bold"]) if self.no_ntlm else ""
         null_auth = colored(f" (Null Auth:{self.null_auth})", host_info_colors[2], attrs=["bold"]) if self.null_auth else ""
-        self.logger.display(f"{self.server_os}{f' x{self.os_arch}' if self.os_arch else ''} (name:{self.hostname}) (domain:{self.targetDomain}) ({signing}) ({smbv1}){ntlm}{null_auth}")
+        guest = colored(f" (Guest Auth:{self.is_guest})", host_info_colors[1], attrs=["bold"]) if self.is_guest else ""
+        self.logger.display(f"{self.server_os}{f' x{self.os_arch}' if self.os_arch else ''} (name:{self.hostname}) (domain:{self.targetDomain}) ({signing}) ({smbv1}){ntlm}{null_auth}{guest}")
 
         if self.args.generate_hosts_file or self.args.generate_krb5_file:
             if self.args.generate_hosts_file:
@@ -384,6 +384,12 @@ class smb(connection):
 
             out = f"{self.domain}\\{self.username}{used_ccache} {self.mark_stealth()}"
             self.logger.success(out)
+
+            # Add Kerberos credential to database for shares and other functionality
+            self.db.add_credential("kerberos", domain, self.username, used_ccache)
+            user_id = self.db.get_credential("kerberos", domain, self.username, used_ccache)
+            host_id = self.db.get_hosts(self.host)[0].id
+            self.db.add_loggedin_relation(user_id, host_id)
 
             if not self.args.local_auth and self.username != "" and not self.args.delegate:
                 add_user_bh(self.username, domain, self.logger, self.config)
@@ -1357,14 +1363,30 @@ class smb(connection):
         user_id = None
         try:
             self.logger.debug(f"domain: {self.domain}")
-            user_id = self.db.get_user(self.domain.upper(), self.username)[0][0]
+            # Try to get user_id from credentials table based on authentication method
+            if hasattr(self, "password") and self.password:
+                user_id = self.db.get_credential("plaintext", self.domain, self.username, self.password)
+            elif hasattr(self, "hash") and self.hash:
+                user_id = self.db.get_credential("hash", self.domain, self.username, self.hash)
+            elif self.kerberos:
+                # For Kerberos, try to find the credential by matching domain and username
+                creds = self.db.get_credentials()
+                for cred in creds:
+                    if (cred[4] == "kerberos" and
+                        cred[1].lower() == self.domain.lower() and
+                        cred[2].lower() == self.username.lower()):
+                        user_id = cred[0]
+                        break
+            else:
+                # Fallback to original method for other auth types
+                user_id = self.db.get_user(self.domain.upper(), self.username)[0][0]
         except IndexError as e:
             if self.kerberos or self.username == "":
-                pass
+                self.logger.debug(f"IndexError during user lookup (this is normal for Kerberos): {e!s}")
             else:
                 self.logger.fail(f"IndexError: {e!s}")
         except Exception as e:
-            self.logger.fail(f"Error getting user: {get_error_string(e)}")
+            self.logger.debug(f"Error getting user: {get_error_string(e)}")
 
         try:
             shares = self.conn.listShares()
@@ -1475,7 +1497,13 @@ class smb(connection):
 
             if user_id and share_name != "IPC$" and read:
                 try:
-                    self.db.add_share(self.hostname, user_id, share_name, share_remark, read, write)
+                    # Get the host ID from the database
+                    hosts = self.db.get_hosts(self.host)  # self.host is the IP address
+                    if hosts:
+                        host_id = hosts[0][0]  # First element is the ID
+                        self.db.add_share(host_id, user_id, share_name, share_remark, read, write)
+                    else:
+                        self.logger.debug(f"Could not find host {self.host} in database to save share {share_name}")
                 except Exception as e:
                     self.logger.debug(f"Error saving share info to DB: {get_error_string(e)}")
 
@@ -1488,11 +1516,21 @@ class smb(connection):
 
         for share in permissions:
             name = share["name"]
-            remark = share["remark"]
-            perms = ",".join(share["access"])
+            remark = share.get("remark", "") or ""
+            access = share.get("access", "")
+
+            # Normalize permissions
+            if isinstance(access, str):
+                perms = access
+            elif isinstance(access, (list, tuple, set)):
+                perms = "".join(access) if all(len(str(x)) == 1 for x in access) else ", ".join(access)
+            else:
+                perms = ""
+
             if self.args.shares and self.args.shares.lower() not in perms.lower():
                 continue
-            self.logger.highlight(f"{name:<15} {','.join(perms):<15} {remark}")
+            self.logger.highlight(f"{name:<15} {perms:<15} {remark}")
+
         return permissions
 
     def dir(self):
@@ -2077,7 +2115,7 @@ class smb(connection):
 
         if self.args.pvk is not None:
             try:
-                self.pvkbytes = open(self.args.pvk, "rb").read()
+                self.pvkbytes = open(self.args.pvk, "rb").read()  # noqa: SIM115
                 self.logger.success(f"Loading domain backupkey from {self.args.pvk}")
             except Exception as e:
                 self.logger.fail(str(e))
@@ -2098,7 +2136,7 @@ class smb(connection):
             use_kcache=self.use_kcache,
         )
 
-        self.output_file = open(self.output_file_template.format(output_folder="dpapi"), "w", encoding="utf-8")
+        self.output_file = open(self.output_file_template.format(output_folder="dpapi"), "w", encoding="utf-8")  # noqa: SIM115
 
         conn = upgrade_to_dploot_connection(connection=self.conn, target=target)
         if conn is None:
