@@ -2115,7 +2115,7 @@ class smb(connection):
 
         if self.args.pvk is not None:
             try:
-                self.pvkbytes = open(self.args.pvk, "rb").read()  # noqa: SIM115
+                self.pvkbytes = open(self.args.pvk, "rb").read()
                 self.logger.success(f"Loading domain backupkey from {self.args.pvk}")
             except Exception as e:
                 self.logger.fail(str(e))
@@ -2136,7 +2136,7 @@ class smb(connection):
             use_kcache=self.use_kcache,
         )
 
-        self.output_file = open(self.output_file_template.format(output_folder="dpapi"), "w", encoding="utf-8")  # noqa: SIM115
+        self.output_file = open(self.output_file_template.format(output_folder="dpapi"), "w", encoding="utf-8")
 
         conn = upgrade_to_dploot_connection(connection=self.conn, target=target)
         if conn is None:
