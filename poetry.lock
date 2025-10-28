@@ -1090,9 +1090,9 @@ six = "*"
 
 [package.source]
 type = "git"
-url = "https://github.com/Mercury0/impacket"
+url = "https://github.com/blacklanternsecurity/impacket"
 reference = "HEAD"
-resolved_reference = "4b8a55a612180c07ac865c15d6d7e2f2807b8408"
+resolved_reference = "192039b07798bb9174542565f27ad0be967ff838"
 
 [[package]]
 name = "iniconfig"
@@ -2779,4 +2779,4 @@ test = ["pytest", "pytest-cov"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4.0"
-content-hash = "9a3ed59f900f2aa631b8f858c5421835d7b360614c7a8a2402e9f7b2d3fb5d89"
+content-hash = "ac569a6f10dccd0f52309965dc960face4580da179353f940114d919480079bb"
