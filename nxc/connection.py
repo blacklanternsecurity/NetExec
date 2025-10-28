@@ -136,6 +136,8 @@ class connection:
         self.db = db
         self.logger = nxc_logger
         self.conn = None
+        self.output_file_template = None
+        self.output_filename = None
 
         # Authentication info
         self.password = ""
@@ -159,11 +161,6 @@ class connection:
         self.port = self.args.port
         self.local_ip = None
         self.dns_server = self.args.dns_server
-
-        # Construct the output file template using os.path.join for OS compatibility
-        base_log_dir = os.path.join(os.path.expanduser(NXC_PATH), "logs")
-        filename_pattern = f"{self.hostname}_{self.host}_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}".replace(":", "-")
-        self.output_file_template = os.path.join(base_log_dir, "{output_folder}", filename_pattern)
 
         # DNS resolution
         dns_result = self.resolver(target)
@@ -244,6 +241,14 @@ class connection:
         else:
             self.logger.debug("Created connection object")
             self.enum_host_info()
+
+            # Construct the output file template using os.path.join for OS compatibility
+            base_log_dir = os.path.join(NXC_PATH, "logs")
+            filename_pattern = f"{self.hostname}_{self.host}_{datetime.now().strftime('%Y-%m-%d_%H%M%S')}".replace(":", "-")
+            self.output_file_template = os.path.join(base_log_dir, "{output_folder}", filename_pattern)
+            # Default output filename for logs
+            self.output_filename = os.path.join(base_log_dir, filename_pattern)
+
             self.print_host_info()
             if self.login() or (self.username == "" and self.password == ""):
                 if hasattr(self.args, "module") and self.args.module:
@@ -324,7 +329,7 @@ class connection:
         if self.failed_logins == self.args.fail_limit:
             return True
 
-        if username in user_failed_logins and self.args.ufail_limit == user_failed_logins[username]:
+        if username in user_failed_logins and self.args.ufail_limit == user_failed_logins[username]:  # noqa: SIM103
             return True
 
         return False

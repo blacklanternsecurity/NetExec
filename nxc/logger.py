@@ -101,6 +101,7 @@ class NXCAdapter(logging.LoggerAdapter):
         logging.getLogger("minidump").disabled = True
         logging.getLogger("lsassy").disabled = True
         logging.getLogger("dploot").disabled = True
+        logging.getLogger("certipy").disabled = True
         logging.getLogger("aardwolf").disabled = True
         logging.getLogger("unicrypto").disabled = True
         logging.getLogger("asyncio").setLevel(logging.ERROR)
@@ -178,7 +179,7 @@ class NXCAdapter(logging.LoggerAdapter):
         file_creation = False
 
         if not os.path.isfile(output_file):
-            open(output_file, "x")
+            open(output_file, "x")  # noqa: SIM115
             file_creation = True
 
         file_handler = RotatingFileHandler(output_file, maxBytes=100000, encoding="utf-8")

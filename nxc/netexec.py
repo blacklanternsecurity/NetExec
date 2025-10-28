@@ -40,7 +40,7 @@ if platform.system() != "Windows":
     resource.setrlimit(resource.RLIMIT_NOFILE, file_limit)
 
 
-async def start_run(protocol_obj, args, db, targets):
+async def start_run(protocol_obj, args, db, targets):  # noqa: RUF029
     futures = []
     nxc_logger.debug("Creating ThreadPoolExecutor")
     if args.no_progress or len(targets) == 1:
@@ -58,7 +58,7 @@ async def start_run(protocol_obj, args, db, targets):
             nxc_logger.debug(f"Creating thread for {protocol_obj}")
             futures = [executor.submit(protocol_obj, args, db, target) for target in targets]
             for _ in as_completed(futures):
-                current += 1
+                current += 1  # noqa: SIM113
                 progress.update(tasks, completed=current)
     for future in as_completed(futures):
         try:
@@ -104,26 +104,29 @@ def main():
                 start_id, end_id = cred_id.split("-")
                 try:
                     for n in range(int(start_id), int(end_id) + 1):
-                        args.cred_id.append(n)
-                    args.cred_id.remove(cred_id)
+                        args.cred_id.append(n)    # noqa: B909
+                    args.cred_id.remove(cred_id)  # noqa: B909
                 except Exception as e:
                     nxc_logger.error(f"Error parsing database credential id: {e}")
                     exit(1)
 
     if hasattr(args, "target") and args.target:
         for target in args.target:
-            if exists(target) and os.path.isfile(target):
-                target_file_type = identify_target_file(target)
-                if target_file_type == "nmap":
-                    targets.extend(parse_nmap_xml(target, args.protocol))
-                elif target_file_type == "nessus":
-                    targets.extend(parse_nessus_file(target, args.protocol))
+            try:
+                if exists(target) and os.path.isfile(target):
+                    target_file_type = identify_target_file(target)
+                    if target_file_type == "nmap":
+                        targets.extend(parse_nmap_xml(target, args.protocol))
+                    elif target_file_type == "nessus":
+                        targets.extend(parse_nessus_file(target, args.protocol))
+                    else:
+                        with open(target) as target_file:
+                            for target_entry in target_file:
+                                targets.extend(parse_targets(target_entry.strip()))
                 else:
-                    with open(target) as target_file:
-                        for target_entry in target_file:
-                            targets.extend(parse_targets(target_entry.strip()))
-            else:
-                targets.extend(parse_targets(target))
+                    targets.extend(parse_targets(target))
+            except Exception as e:
+                nxc_logger.fail(f"Failed to parse target '{target}': {e}")
 
     # The following is a quick hack for the powershell obfuscation functionality, I know this is yucky
     if hasattr(args, "clear_obfscripts") and args.clear_obfscripts:
