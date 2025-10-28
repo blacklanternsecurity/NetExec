@@ -434,22 +434,26 @@ files = [
 
 [[package]]
 name = "bloodhound-ce"
-version = "1.9.1"
+version = "1.9.0"
 description = "Python based ingestor for BloodHound Community Edition"
 optional = false
 python-versions = "*"
 groups = ["main"]
-files = [
-    {file = "bloodhound_ce-1.9.1-py3-none-any.whl", hash = "sha256:bb3bd6fb67b9337c738d4168b4f712b0d5544bb543c7405cc27977e61f67bab6"},
-    {file = "bloodhound_ce-1.9.1.tar.gz", hash = "sha256:083df3dc3ad998edcff8fb63fdd8f5b464aab5fdac8e05cc9b3b6520210f79ab"},
-]
+files = []
+develop = false
 
 [package.dependencies]
 dnspython = "*"
-impacket = ">=0.9.17"
+impacket = {git = "https://github.com/blacklanternsecurity/impacket"}
 ldap3 = ">2.5.0,<2.5.2 || >2.5.2,<2.6 || >2.6"
 pyasn1 = ">=0.4"
 pycryptodome = "*"
+
+[package.source]
+type = "git"
+url = "https://github.com/blacklanternsecurity/BloodHound.py.git"
+reference = "bloodhound-ce"
+resolved_reference = "2afdef99d1362d3af44b565f4325b8c32b3e0a15"
 
 [[package]]
 name = "certifi"
@@ -2779,4 +2783,4 @@ test = ["pytest", "pytest-cov"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<4.0"
-content-hash = "ac569a6f10dccd0f52309965dc960face4580da179353f940114d919480079bb"
+content-hash = "87b1790bab9eb83208298c51ec9433fa670317643d2263f3ead4b3ac4f77b5b2"
