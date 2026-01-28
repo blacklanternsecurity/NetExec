@@ -107,6 +107,7 @@ class rdp(connection):
             self.logger.display(f"Probably old, doesn't not support HYBRID or HYBRID_EX ({nla})")
         else:
             self.logger.display(f"{self.server_os} (name:{self.hostname}) (domain:{self.domain}) ({nla})")
+            self.db.add_host(self.host, self.port, self.hostname, self.domain, self.server_os, self.nla)
 
     def create_conn_obj(self):
         self.target = RDPTarget(ip=self.host, domain="FAKE", port=self.port, timeout=self.args.rdp_timeout)
@@ -448,11 +449,9 @@ class rdp(connection):
                         self.logger.fail("Warning: Clipboard may not be fully initialized, no output can be retrieved")
                         return ""
 
-            if not clipboard_ready and get_output:
-                self.logger.fail("Clipboard cannot be initialized, no output can be retrieved")
-                return ""
-            else:
-                self.logger.success("Clipboard is ready, proceeding with command execution")
+                if not clipboard_ready:
+                    self.logger.fail("Clipboard cannot be initialized, no output can be retrieved")
+                    return ""
 
             # Wait for desktop to be available
             await asyncio.sleep(self.args.cmd_delay)
@@ -494,6 +493,8 @@ class rdp(connection):
                     else:
                         self.logger.fail("Clipboard is empty or contains non-text data")
                     return clipboard_text
+                else:
+                    self.logger.success("Executed command without retrieving output")
 
                 self.logger.debug("Command execution completed")
                 return None
