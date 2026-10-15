@@ -3,7 +3,6 @@ import base64
 import copy
 import contextlib
 from datetime import datetime
-import os
 from os import getenv
 from uuid import uuid4
 from anyio import Path

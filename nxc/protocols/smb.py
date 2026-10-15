@@ -210,7 +210,6 @@ class smb(connection):
         aggressive_check = bool(self.args.generate_hosts_file or self.args.generate_krb5_file)
         self.is_host_dc(aggressive_check=aggressive_check)
 
-
         # self.domain is the attribute we authenticate with
         # self.targetDomain is the attribute which gets displayed as host domain
         if not self.no_ntlm:
