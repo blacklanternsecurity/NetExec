@@ -88,7 +88,6 @@ class TSCH_EXEC:
 
         if "powershell" in command.lower() and ("-command" in command.lower() or "-c " in command.lower()):
             self.logger.debug("PowerShell command detected, keeping as is (user requested)")
-            safer_command = command.replace("powershell", "poWerSheLL").replace("POWERSHELL", "PoWeRsHeLL")
 
         valid_system_filename_prefixes = [
             "DiagTrack-", "CompatTel-", "WindowsUpdate-", "NetTrace-",

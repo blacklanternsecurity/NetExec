@@ -1,10 +1,22 @@
 import os
+import random
 from os.path import join as path_join
 from impacket.dcerpc.v5 import scmr
 from nxc.helpers.misc import gen_random_string
 from nxc.paths import TMP_PATH
 from nxc.helpers.rpc import NXCRPCConnection
 from nxc.protocols.smb.exec_output import get_output_file
+
+_SVC_PREFIXES = [
+    "WinDiag", "WinMgmt", "WinSvc", "MsMaint", "SysHelper",
+    "WUAgent", "WSearch", "DPSvc", "WdiSvc", "WerSvc",
+]
+
+
+def _gen_service_name():
+    prefix = random.choice(_SVC_PREFIXES)
+    suffix = f"{random.randint(100, 9999):04d}"
+    return f"{prefix}{suffix}"
 
 
 class SMBEXEC:
@@ -14,7 +26,7 @@ class SMBEXEC:
         self.logger = logger
         self.__tries = tries
 
-        self.__serviceName = gen_random_string()
+        self.__serviceName = _gen_service_name()
         self.__output = None
         self.__batchFile = None
         self.__outputBuffer = b""
@@ -47,7 +59,7 @@ class SMBEXEC:
         self.__outputBuffer += data
 
     def execute_remote(self, data):
-        self.__output = gen_random_string(6)
+        self.__output = gen_random_string(6) + ".tmp"
         self.__batchFile = gen_random_string(6) + ".bat"
 
         command = self.__shell + "echo " + data + f" ^> \\\\%COMPUTERNAME%\\{self.__share}\\{self.__output} 2^>^&1 > %TEMP%\\{self.__batchFile} & %COMSPEC% /Q /c %TEMP%\\{self.__batchFile} & %COMSPEC% /Q /c del %TEMP%\\{self.__batchFile}" if self.__retOutput else self.__shell + data
