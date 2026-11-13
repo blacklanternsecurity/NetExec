@@ -9,7 +9,8 @@ import base64
 from nxc.helpers.negotiate_parser import parse_challenge
 from nxc.helpers.misc import sanitize_dns
 from nxc.config import process_secret
-from nxc.connection import connection, dcom_FirewallChecker, requires_admin
+from nxc.connection import connection, requires_admin
+from nxc.helpers.rpc import dcom_FirewallChecker
 from nxc.helpers.misc import validate_ntlm
 from nxc.logger import NXCAdapter
 from nxc.helpers.logger import highlight
@@ -22,7 +23,10 @@ from dploot.lib.network.wmi import WMITarget as Target
 
 from impacket import ntlm
 from impacket.uuid import uuidtup_to_bin
+from impacket.krb5 import constants
 from impacket.krb5.ccache import CCache
+from impacket.krb5.kerberosv5 import getKerberosTGT
+from impacket.krb5.types import Principal
 from impacket.examples.secretsdump import LSASecrets, SAMHashes, NTDSHashes
 from impacket.dcerpc.v5.dtypes import NULL
 from impacket.dcerpc.v5 import transport, epm
@@ -42,6 +46,7 @@ class wmi(connection):
         self.nthash = ""
         self.server_os = None
         self.doKerberos = False
+        self.tgt = None
         self.stringBinding = None
         # from: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/18d8fbe8-a967-4f1c-ae50-99ca8e491d2d
         self.rpc_error_status = {
@@ -145,6 +150,7 @@ class wmi(connection):
         except Exception:
             buffer = 0
 
+        self.remoteName = self.host
         if buffer != 0:
             response = MSRPCHeader(buffer)
             bindResp = MSRPCBindAck(response.getData())
@@ -154,6 +160,7 @@ class wmi(connection):
             domain = ntlm_info["domain"] or (dns_hostname.split(".", 1)[1] if "." in dns_hostname else self.host)
             self.hostname = sanitize_dns(hostname, self.logger)
             self.targetDomain = self.domain = sanitize_dns(domain, self.logger)
+            self.remoteName = sanitize_dns(dns_hostname, self.logger) if self.kerberos else self.host
             self.server_os = ntlm_info["os_version"]
             self.logger.extra["hostname"] = self.hostname
         else:
@@ -163,24 +170,27 @@ class wmi(connection):
         if self.args.domain:
             self.domain = self.args.domain
 
-        # DCOM connection with kerberos needed
-        self.remoteName = self.host if not self.kerberos else f"{self.hostname}.{self.domain}"
-
         if not self.kdcHost and self.domain:
             result = self.resolver(self.domain)
             self.kdcHost = result["host"] if result else None
             self.logger.info(f"Resolved domain: {self.domain} with dns, kdcHost: {self.kdcHost}")
 
     def print_host_info(self):
-        self.logger.extra["protocol"] = "RPC"
-        self.logger.extra["port"] = "135"
         self.logger.display(f"{self.server_os} (name:{self.hostname}) (domain:{self.targetDomain})")
 
     def check_if_admin(self):
+        # With several credentials, drop the admin flag, namespaces and DCOM connections (cached per target by impacket) of the previous one
+        self.admin_privs = False
+        self.namespaces = {}
+        if self.dcom_conn:
+            self.dcom_conn.disconnect()
+            self.dcom_conn = None
         try:
-            self.dcom_conn = DCOMConnection(self.remoteName, self.username, self.password, self.domain, self.lmhash, self.nthash, oxidResolver=True, doKerberos=self.doKerberos, kdcHost=self.kdcHost, aesKey=self.aesKey, remoteHost=self.host)
-            iInterface = self.dcom_conn.CoCreateInstanceEx(CLSID_WbemLevel1Login, IID_IWbemLevel1Login)
-            flag, self.stringBinding = dcom_FirewallChecker(iInterface, self.host, self.args.rpc_timeout)
+            # Only keep the connection once activated: impacket's disconnect() can't run twice on a target
+            dcom_conn = DCOMConnection(self.remoteName, self.username, self.password, self.domain, self.lmhash, self.nthash, oxidResolver=True, doKerberos=self.doKerberos, kdcHost=self.kdcHost, aesKey=self.aesKey, remoteHost=self.host, TGT=self.tgt)
+            iInterface = dcom_conn.CoCreateInstanceEx(CLSID_WbemLevel1Login, IID_IWbemLevel1Login)
+            self.dcom_conn = dcom_conn
+            flag, self.stringBinding = dcom_FirewallChecker(iInterface, self.host, self.args.rpc_timeout, self.logger)
         except Exception as e:
             self.logger.debug(f"Received error while checking admin: {e}")
             if "access_denied" not in str(e).lower():
@@ -202,7 +212,6 @@ class wmi(connection):
                         self.logger.fail(str(e))
                         return False
                 else:
-                    self.logger.extra["protocol"] = "WMI"
                     self.admin_privs = True
 
     def kerberos_login(self, domain, username, password="", ntlm_hash="", aesKey="", kdcHost="", useCache=False):
@@ -212,6 +221,7 @@ class wmi(connection):
         self.password = password
         self.username = username
         self.domain = domain
+        self.tgt = None
         self.create_conn_obj()
 
         if password == "":
@@ -233,10 +243,14 @@ class wmi(connection):
 
         try:
             self.logger.debug(f"Attempting to connect via WMI to {self.host}")
-            self.conn.set_credentials(username=username, password=password, domain=domain, lmhash=lmhash, nthash=nthash, aesKey=self.aesKey)
+            dce = self.conn.get_dce_rpc()
+            # Reuse one TGT for every RPC/DCOM bind, impacket would otherwise redo the AS exchange on each bind
+            if not useCache and kerb_pass:
+                tgt, cipher, _, session_key = getKerberosTGT(Principal(username, type=constants.PrincipalNameType.NT_PRINCIPAL.value), password, domain, lmhash, nthash, self.aesKey, kdcHost)
+                self.tgt = {"KDC_REP": tgt, "cipher": cipher, "sessionKey": session_key}
+            self.conn.set_credentials(username=username, password=password, domain=domain, lmhash=lmhash, nthash=nthash, aesKey=self.aesKey, TGT=self.tgt)
             self.conn.setRemoteHost(self.host)
             self.conn.set_kerberos(True, kdcHost)
-            dce = self.conn.get_dce_rpc()
             dce.set_auth_type(RPC_C_AUTHN_GSS_NEGOTIATE)
             dce.set_auth_level(RPC_C_AUTHN_LEVEL_PKT_PRIVACY)
             dce.connect()
@@ -392,8 +406,10 @@ class wmi(connection):
         escaped_path = remote_path.replace("\\", "\\\\")
 
         # Load the Namespace
-        powershellv3_namespace = self.get_namespace("//./root/Microsoft/Windows/Powershellv3")
-        if powershellv3_namespace is None:
+        try:
+            powershellv3_namespace = self.get_namespace("//./root/Microsoft/Windows/Powershellv3")
+        except Exception as e:
+            self.logger.debug(f"Cannot load WMI Namespace //./root/Microsoft/Windows/Powershellv3: {e}")
             return None
 
         # Read the file
@@ -791,13 +807,8 @@ class wmi(connection):
         if namespace in self.namespaces:
             return self.namespaces[namespace]
         self.logger.debug(f"Getting namespace {namespace}")
-        try:
-            iWbemServices = self.iWbemLevel1Login.NTLMLogin(namespace, NULL, NULL)
-            self.iWbemLevel1Login.RemRelease()
-        except Exception as e:
-            self.logger.debug(f"Cannot load WMI Namespace {namespace}: {e}")
-            return None
-        self.namespaces[namespace] = iWbemServices
+        self.namespaces[namespace] = self.iWbemLevel1Login.NTLMLogin(namespace, NULL, NULL)
+        self.iWbemLevel1Login.RemRelease()
         return self.namespaces[namespace]
 
     @property
