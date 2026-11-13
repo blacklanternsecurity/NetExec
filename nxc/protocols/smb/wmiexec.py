@@ -6,6 +6,9 @@ from nxc.helpers.rpc import dcom_FirewallChecker
 from nxc.helpers.misc import gen_random_string
 from nxc.paths import TMP_PATH
 from nxc.protocols.smb.exec_output import get_output_file
+from impacket.dcerpc.v5.dcomrt import DCOMConnection
+from impacket.dcerpc.v5.dcom import wmi
+from impacket.dcerpc.v5.dtypes import NULL
 
 _DROP_DIRS = [
     "\\Windows\\Temp\\",
@@ -14,9 +17,6 @@ _DROP_DIRS = [
 ]
 
 _OUTPUT_EXTS = [".tmp", ".log", ".etl"]
-from impacket.dcerpc.v5.dcomrt import DCOMConnection
-from impacket.dcerpc.v5.dcom import wmi
-from impacket.dcerpc.v5.dtypes import NULL
 
 
 class WMIEXEC:

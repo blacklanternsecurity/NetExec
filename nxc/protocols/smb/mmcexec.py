@@ -32,15 +32,6 @@ from nxc.helpers.rpc import dcom_FirewallChecker
 from nxc.helpers.misc import gen_random_string
 from nxc.paths import TMP_PATH
 from nxc.protocols.smb.exec_output import get_output_file
-
-_DROP_DIRS = [
-    "\\Windows\\Temp\\",
-    "\\Windows\\Tasks\\",
-    "\\ProgramData\\",
-]
-
-_OUTPUT_EXTS = [".tmp", ".log", ".etl"]
-
 from impacket.dcerpc.v5.dcom.oaut import (
     IID_IDispatch,
     string_to_bin,
@@ -66,6 +57,14 @@ from impacket.dcerpc.v5.dcomrt import (
     INTERFACE,
 )
 from impacket.dcerpc.v5.dtypes import NULL
+
+_DROP_DIRS = [
+    "\\Windows\\Temp\\",
+    "\\Windows\\Tasks\\",
+    "\\ProgramData\\",
+]
+
+_OUTPUT_EXTS = [".tmp", ".log", ".etl"]
 
 
 class MMCEXEC:
