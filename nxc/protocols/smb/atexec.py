@@ -13,7 +13,6 @@ from impacket.dcerpc.v5.rpcrt import RPC_C_AUTHN_LEVEL_PKT_PRIVACY
 from nxc.helpers.misc import gen_random_string
 from nxc.helpers.rpc import NXCRPCConnection
 from nxc.paths import TMP_PATH
-from nxc.protocols.smb.exec_output import get_output_file
 
 
 class TSCH_EXEC:
