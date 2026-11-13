@@ -1,8 +1,9 @@
 import ntpath
 import os
+import random
 from time import sleep
 from nxc.helpers.rpc import dcom_FirewallChecker
-from nxc.helpers.misc import gen_random_string
+from nxc.helpers.misc import gen_random_string, DROP_DIRS, OUTPUT_EXTS
 from nxc.paths import TMP_PATH
 from nxc.protocols.smb.exec_output import get_output_file
 from impacket.dcerpc.v5.dcomrt import DCOMConnection
@@ -110,7 +111,7 @@ class WMIEXEC:
             self.execute_remote(data)
 
     def execute_remote(self, data):
-        self.__output = "\\Windows\\Temp\\" + gen_random_string(6)
+        self.__output = random.choice(DROP_DIRS) + gen_random_string(6) + random.choice(OUTPUT_EXTS)
 
         command = self.__shell + data
         if self.__retOutput:
@@ -121,7 +122,7 @@ class WMIEXEC:
         self.get_output_remote()
 
     def execute_fileless(self, data):
-        self.__output = gen_random_string(6)
+        self.__output = gen_random_string(6) + random.choice(OUTPUT_EXTS)
         local_ip = self.__smbconnection.getSMBServer().get_socket().getsockname()[0]
 
         command = self.__shell + data + f" 1> \\\\{local_ip}\\{self.__share_name}\\{self.__output} 2>&1"

