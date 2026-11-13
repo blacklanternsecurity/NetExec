@@ -29,7 +29,7 @@ import random
 from os.path import join as path_join
 from time import sleep
 from nxc.helpers.rpc import dcom_FirewallChecker
-from nxc.helpers.misc import gen_random_string
+from nxc.helpers.misc import gen_random_string, DROP_DIRS, OUTPUT_EXTS
 from nxc.paths import TMP_PATH
 from nxc.protocols.smb.exec_output import get_output_file
 from impacket.dcerpc.v5.dcom.oaut import (
@@ -57,14 +57,6 @@ from impacket.dcerpc.v5.dcomrt import (
     INTERFACE,
 )
 from impacket.dcerpc.v5.dtypes import NULL
-
-_DROP_DIRS = [
-    "\\Windows\\Temp\\",
-    "\\Windows\\Tasks\\",
-    "\\ProgramData\\",
-]
-
-_OUTPUT_EXTS = [".tmp", ".log", ".etl"]
 
 
 class MMCEXEC:
@@ -198,7 +190,7 @@ class MMCEXEC:
         return True
 
     def execute_remote(self, data):
-        self.__output = random.choice(_DROP_DIRS) + gen_random_string(6) + random.choice(_OUTPUT_EXTS)
+        self.__output = random.choice(DROP_DIRS) + gen_random_string(6) + random.choice(OUTPUT_EXTS)
 
         command = self.__shell + " /Q /c " + data
         if self.__retOutput is True:

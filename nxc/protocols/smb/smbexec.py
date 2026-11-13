@@ -7,15 +7,15 @@ from nxc.paths import TMP_PATH
 from nxc.helpers.rpc import NXCRPCConnection
 from nxc.protocols.smb.exec_output import get_output_file
 
-_SVC_PREFIXES = [
+SVC_PREFIXES = [
     "WinDiag", "WinMgmt", "WinSvc", "MsMaint", "SysHelper",
     "WUAgent", "WSearch", "DPSvc", "WdiSvc", "WerSvc",
 ]
 
 
-def _gen_service_name():
-    prefix = random.choice(_SVC_PREFIXES)
-    suffix = f"{random.randint(100, 9999):04d}"
+def gen_service_name():
+    prefix = random.choice(SVC_PREFIXES)
+    suffix = str(random.randint(1000, 9999))
     return f"{prefix}{suffix}"
 
 
@@ -26,7 +26,7 @@ class SMBEXEC:
         self.logger = logger
         self.__tries = tries
 
-        self.__serviceName = _gen_service_name()
+        self.__serviceName = gen_service_name()
         self.__output = None
         self.__batchFile = None
         self.__outputBuffer = b""

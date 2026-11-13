@@ -29,6 +29,15 @@ def gen_random_string(length=10):
     return "".join(random.choices(string.ascii_letters + string.digits, k=int(length)))
 
 
+DROP_DIRS = [
+    "\\Windows\\Temp\\",
+    "\\Windows\\Tasks\\",
+    "\\ProgramData\\",
+]
+
+OUTPUT_EXTS = [".tmp", ".log", ".etl"]
+
+
 def sanitize_dns(hostname, logger=nxc_logger):
     """Return an untrusted hostname or domain as a safe, nonempty string."""
     # Always provide a safe fallback, even for missing or unstringable input.
