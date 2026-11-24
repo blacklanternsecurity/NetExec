@@ -28,7 +28,7 @@ from impacket.examples.regsecrets import (
     LSASecrets as RegSecretsLSASecrets
 )
 from impacket.nmb import NetBIOSError, NetBIOSTimeout
-from impacket.dcerpc.v5 import lsat, lsad, scmr, rrp, srvs, wkst
+from impacket.dcerpc.v5 import lsat, lsad, rrp, srvs, wkst
 from impacket.dcerpc.v5.srvs import (
     STYPE_DISKTREE, STYPE_PRINTQ, STYPE_DEVICE, STYPE_IPC,
     STYPE_CLUSTER_FS, STYPE_CLUSTER_SOFS, STYPE_CLUSTER_DFS,
