@@ -27,7 +27,12 @@ from impacket.krb5.ccache import CCache
 from impacket.krb5.crypto import InvalidChecksum, _enctype_table
 from impacket.krb5.kerberosv5 import KerberosError, sendReceive
 from impacket.krb5.pac import NTLM_SUPPLEMENTAL_CREDENTIAL, PACTYPE, PAC_CREDENTIAL_DATA, PAC_CREDENTIAL_INFO, PAC_INFO_BUFFER
-from impacket.krb5.pkinit import PKINITCredentials, PKINITError, getKerberosTGTPKINIT
+try:
+    from impacket.krb5.pkinit import PKINITCredentials, PKINITError, getKerberosTGTPKINIT
+except ImportError:
+    PKINITCredentials = None
+    PKINITError = type("PKINITError", (Exception,), {})
+    getKerberosTGTPKINIT = None
 from impacket.krb5.types import KerberosTime, Principal, Ticket
 
 from nxc.helpers.path import sanitize_path_component
@@ -36,6 +41,8 @@ from nxc.paths import NXC_PATH, TMP_PATH
 
 def pkinit_credentials(args):
     """Load the client certificate and its private key as the PKINIT credentials impacket expects"""
+    if PKINITCredentials is None:
+        raise ImportError("impacket.krb5.pkinit is not available — the installed impacket version does not support PKINIT certificate authentication")
     if args.pfx_cert:
         return PKINITCredentials.fromPFX(args.pfx_cert, args.pfx_pass)
 
